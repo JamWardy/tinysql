@@ -1,0 +1,5 @@
+# Build outputs
+/tinysql
+*.o
+*.d
+*.dSYM/
