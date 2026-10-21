@@ -1,7 +1,7 @@
 CC ?= cc
 CFLAGS = -std=c11 -Wall -Wextra -Wpedantic -g
 
-SRCS = src/main.c src/tokenizer.c src/parser.c
+SRCS = src/main.c src/tokenizer.c src/parser.c src/table.c src/executor.c
 OBJS = $(SRCS:.c=.o)
 DEPS = $(OBJS:.o=.d)
 
