@@ -6,27 +6,31 @@
 
 const char *token_type_name(TokenType type) {
     switch (type) {
-        case TOKEN_IDENTIFIER: return "IDENTIFIER";
-        case TOKEN_NUMBER:     return "NUMBER";
-        case TOKEN_STRING:     return "STRING";
-        case TOKEN_LPAREN:     return "LPAREN";
-        case TOKEN_RPAREN:     return "RPAREN";
-        case TOKEN_COMMA:      return "COMMA";
-        case TOKEN_SEMICOLON:  return "SEMICOLON";
-        case TOKEN_STAR:       return "STAR";
-        case TOKEN_EQUAL:      return "EQUAL";
-        case TOKEN_LESS:       return "LESS";
-        case TOKEN_GREATER:    return "GREATER";
-        case TOKEN_CREATE:     return "CREATE";
-        case TOKEN_TABLE:      return "TABLE";
-        case TOKEN_INSERT:     return "INSERT";
-        case TOKEN_INTO:       return "INTO";
-        case TOKEN_VALUES:     return "VALUES";
-        case TOKEN_SELECT:     return "SELECT";
-        case TOKEN_FROM:       return "FROM";
-        case TOKEN_INT:        return "INT";
-        case TOKEN_TEXT:       return "TEXT";
-        case TOKEN_EOF:        return "EOF";
+        case TOKEN_IDENTIFIER:     return "IDENTIFIER";
+        case TOKEN_NUMBER:         return "NUMBER";
+        case TOKEN_STRING:         return "STRING";
+        case TOKEN_LPAREN:         return "LPAREN";
+        case TOKEN_RPAREN:         return "RPAREN";
+        case TOKEN_COMMA:          return "COMMA";
+        case TOKEN_SEMICOLON:      return "SEMICOLON";
+        case TOKEN_STAR:           return "STAR";
+        case TOKEN_EQUAL:          return "EQUAL";
+        case TOKEN_NOT_EQUAL:      return "NOT_EQUAL";
+        case TOKEN_LESS:           return "LESS";
+        case TOKEN_LESS_EQUAL:     return "LESS_EQUAL";
+        case TOKEN_GREATER:        return "GREATER";
+        case TOKEN_GREATER_EQUAL:  return "GREATER_EQUAL";
+        case TOKEN_CREATE:         return "CREATE";
+        case TOKEN_TABLE:          return "TABLE";
+        case TOKEN_INSERT:         return "INSERT";
+        case TOKEN_INTO:           return "INTO";
+        case TOKEN_VALUES:         return "VALUES";
+        case TOKEN_SELECT:         return "SELECT";
+        case TOKEN_FROM:           return "FROM";
+        case TOKEN_WHERE:          return "WHERE";
+        case TOKEN_INT:            return "INT";
+        case TOKEN_TEXT:           return "TEXT";
+        case TOKEN_EOF:            return "EOF";
     }
     return "UNKNOWN";
 }
@@ -44,6 +48,7 @@ static const Keyword keywords[] = {
     { "VALUES", TOKEN_VALUES },
     { "SELECT", TOKEN_SELECT },
     { "FROM",   TOKEN_FROM },
+    { "WHERE",  TOKEN_WHERE },
     { "INT",    TOKEN_INT },
     { "TEXT",   TOKEN_TEXT },
 };
@@ -175,27 +180,40 @@ int tokenize(const char *sql, TokenList *list, char *error, size_t error_size) {
         }
 
         TokenType type;
+        int length = 2;
 
-        switch (sql[i]) {
-            case '(': type = TOKEN_LPAREN; break;
-            case ')': type = TOKEN_RPAREN; break;
-            case ',': type = TOKEN_COMMA; break;
-            case ';': type = TOKEN_SEMICOLON; break;
-            case '*': type = TOKEN_STAR; break;
-            case '=': type = TOKEN_EQUAL; break;
-            case '<': type = TOKEN_LESS; break;
-            case '>': type = TOKEN_GREATER; break;
+        // Two-character operators first, so "<=" isn't read as "<" "=".
+        if (strncmp(sql + i, "<=", 2) == 0) {
+            type = TOKEN_LESS_EQUAL;
+        } else if (strncmp(sql + i, ">=", 2) == 0) {
+            type = TOKEN_GREATER_EQUAL;
+        } else if (strncmp(sql + i, "!=", 2) == 0 ||
+                   strncmp(sql + i, "<>", 2) == 0) {
+            type = TOKEN_NOT_EQUAL;
+        } else {
+            length = 1;
 
-            default:
-                snprintf(error, error_size,
-                         "unexpected character '%c'", sql[i]);
-                return 0;
+            switch (sql[i]) {
+                case '(': type = TOKEN_LPAREN; break;
+                case ')': type = TOKEN_RPAREN; break;
+                case ',': type = TOKEN_COMMA; break;
+                case ';': type = TOKEN_SEMICOLON; break;
+                case '*': type = TOKEN_STAR; break;
+                case '=': type = TOKEN_EQUAL; break;
+                case '<': type = TOKEN_LESS; break;
+                case '>': type = TOKEN_GREATER; break;
+
+                default:
+                    snprintf(error, error_size,
+                             "unexpected character '%c'", sql[i]);
+                    return 0;
+            }
         }
 
-        if (!add_token(list, type, sql + i, 1, error, error_size)) {
+        if (!add_token(list, type, sql + i, length, error, error_size)) {
             return 0;
         }
-        i++;
+        i += length;
     }
 
     // Can't fail: add_token always leaves room for EOF.

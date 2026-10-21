@@ -12,6 +12,7 @@ token types produced by the tokenizer in `src/tokenizer.h`.
 | `a b`       | `a` followed by `b`                      |
 | `a \| b`    | either `a` or `b`                        |
 | `{ a }`     | `a` repeated zero or more times          |
+| `[ a ]`     | `a` is optional                          |
 
 ## Rules
 
@@ -29,8 +30,12 @@ insert_stmt   = INSERT INTO IDENTIFIER
 
 value         = NUMBER | STRING
 
-select_stmt   = SELECT select_list FROM IDENTIFIER
+select_stmt   = SELECT select_list FROM IDENTIFIER [ WHERE condition ]
 select_list   = STAR | IDENTIFIER { COMMA IDENTIFIER }
+
+condition     = IDENTIFIER comparison value
+comparison    = EQUAL | NOT_EQUAL | LESS | LESS_EQUAL
+              | GREATER | GREATER_EQUAL
 ```
 
 ## Examples
@@ -42,6 +47,8 @@ CREATE TABLE users (id INT, name TEXT, age INT);
 INSERT INTO users VALUES (1, 'Alice', 25);
 SELECT * FROM users;
 SELECT name, age FROM users;
+SELECT * FROM users WHERE age >= 18;
+SELECT name FROM users WHERE name != 'Bob';   -- `<>` also means not equal
 ```
 
 Rejected:
@@ -53,6 +60,8 @@ INSERT INTO users VALUES (1, 2,);  -- trailing comma
 SELECT * FROM users                -- missing semicolon
 SELECT *, name FROM users;         -- '*' can't be mixed with columns
 SELECT * FROM users; SELECT 1;     -- one statement per line
+SELECT * FROM users WHERE 18 < age;   -- column must come first
+SELECT * FROM users WHERE age > 1 AND id = 2;  -- one condition only
 ```
 
 ## Not checked by the grammar
@@ -63,4 +72,11 @@ depend on what tables exist:
 - the table exists (or, for `CREATE`, doesn't already exist)
 - column names are unique within a `CREATE TABLE`
 - `INSERT` has the right number of values, of the right types
-- `SELECT` names columns that exist
+- `SELECT` names columns that exist, including the `WHERE` column
+- the `WHERE` value has the same type as its column
+
+## Comparing values
+
+`INT` values compare as numbers. `TEXT` values compare byte by byte, so
+uppercase sorts before lowercase (`'B' < 'a'`) and digits compare as
+characters (`'10' < '9'`).

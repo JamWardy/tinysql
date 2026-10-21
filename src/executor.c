@@ -90,6 +90,44 @@ static int execute_insert(Database *db, const Statement *stmt,
     return 1;
 }
 
+// A WHERE condition checked and resolved against a table.
+typedef struct {
+    size_t column;         // Index of the column being compared.
+    CompareOp op;
+    const Literal *value;  // Same type as the column.
+} Filter;
+
+// Returns <0, 0 or >0 as value is less than, equal to or greater than
+// lit. Text compares byte by byte, so 'B' < 'a' and '10' < '9'.
+static int compare(const Value *value, const Literal *lit) {
+    if (value->type == TYPE_INT) {
+        long long a = value->as.integer;
+        long long b = literal_as_int(lit);
+        return (a > b) - (a < b);
+    }
+
+    return strcmp(value->as.text, literal_as_text(lit));
+}
+
+// A NULL filter matches every row.
+static int row_matches(const Row *row, const Filter *filter) {
+    if (!filter) {
+        return 1;
+    }
+
+    int c = compare(&row->values[filter->column], filter->value);
+
+    switch (filter->op) {
+        case CMP_EQUAL:         return c == 0;
+        case CMP_NOT_EQUAL:     return c != 0;
+        case CMP_LESS:          return c < 0;
+        case CMP_LESS_EQUAL:    return c <= 0;
+        case CMP_GREATER:       return c > 0;
+        case CMP_GREATER_EQUAL: return c >= 0;
+    }
+    return 0;
+}
+
 // Number of characters the value takes when printed.
 static int value_width(const Value *value) {
     if (value->type == TYPE_INT) {
@@ -107,20 +145,24 @@ static void print_value(const Value *value, int width) {
     }
 }
 
-// Prints the chosen columns of every row, e.g.
+// Prints the chosen columns of every row that matches filter, e.g.
 //
 //   name  | age
 //   ------+----
 //   Alice |  25
 //   (1 row)
 static void print_rows(const Table *table, const size_t *columns,
-                       int column_count) {
+                       int column_count, const Filter *filter) {
     int widths[MAX_COLUMNS];
 
     for (int i = 0; i < column_count; i++) {
         widths[i] = (int)strlen(table->columns[columns[i]].name);
 
         for (size_t r = 0; r < table->row_count; r++) {
+            if (!row_matches(&table->rows[r], filter)) {
+                continue;
+            }
+
             int width = value_width(&table->rows[r].values[columns[i]]);
             if (width > widths[i]) {
                 widths[i] = width;
@@ -142,16 +184,22 @@ static void print_rows(const Table *table, const size_t *columns,
     }
     putchar('\n');
 
+    size_t printed = 0;
+
     for (size_t r = 0; r < table->row_count; r++) {
+        if (!row_matches(&table->rows[r], filter)) {
+            continue;
+        }
+
         for (int i = 0; i < column_count; i++) {
             printf("%s", i > 0 ? " | " : "");
             print_value(&table->rows[r].values[columns[i]], widths[i]);
         }
         putchar('\n');
+        printed++;
     }
 
-    printf("(%zu %s)\n", table->row_count,
-           table->row_count == 1 ? "row" : "rows");
+    printf("(%zu %s)\n", printed, printed == 1 ? "row" : "rows");
 }
 
 static int execute_select(Database *db, const Statement *stmt,
@@ -188,7 +236,34 @@ static int execute_select(Database *db, const Statement *stmt,
         }
     }
 
-    print_rows(table, columns, column_count);
+    Filter filter;
+
+    if (select->has_where) {
+        const Condition *where = &select->where;
+        int index = table_find_column(table, where->column);
+
+        if (index < 0) {
+            snprintf(error, error_size, "no such column '%s'",
+                     where->column);
+            return 0;
+        }
+
+        const Column *column = &table->columns[index];
+        if (where->value.type != column->type) {
+            snprintf(error, error_size,
+                     "column '%s' is %s but the WHERE value is %s",
+                     column->name, data_type_name(column->type),
+                     data_type_name(where->value.type));
+            return 0;
+        }
+
+        filter.column = (size_t)index;
+        filter.op = where->op;
+        filter.value = &where->value;
+    }
+
+    print_rows(table, columns, column_count,
+               select->has_where ? &filter : NULL);
     return 1;
 }
 

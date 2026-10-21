@@ -256,7 +256,38 @@ static int parse_select_list(Parser *p, SelectStatement *out) {
     return 1;
 }
 
-// select_stmt = SELECT select_list FROM IDENTIFIER
+// condition  = IDENTIFIER comparison value
+// comparison = EQUAL | NOT_EQUAL | LESS | LESS_EQUAL
+//            | GREATER | GREATER_EQUAL
+static int parse_condition(Parser *p, Condition *out) {
+    const Token *column = expect(p, TOKEN_IDENTIFIER, "column name");
+    if (!column) {
+        return 0;
+    }
+
+    switch (peek(p)->type) {
+        case TOKEN_EQUAL:         out->op = CMP_EQUAL; break;
+        case TOKEN_NOT_EQUAL:     out->op = CMP_NOT_EQUAL; break;
+        case TOKEN_LESS:          out->op = CMP_LESS; break;
+        case TOKEN_LESS_EQUAL:    out->op = CMP_LESS_EQUAL; break;
+        case TOKEN_GREATER:       out->op = CMP_GREATER; break;
+        case TOKEN_GREATER_EQUAL: out->op = CMP_GREATER_EQUAL; break;
+
+        default:
+            error_expected(p, "comparison (=, !=, <, <=, > or >=)");
+            return 0;
+    }
+    p->pos++;
+
+    if (!parse_value(p, &out->value)) {
+        return 0;
+    }
+
+    snprintf(out->column, sizeof(out->column), "%s", column->text);
+    return 1;
+}
+
+// select_stmt = SELECT select_list FROM IDENTIFIER [ WHERE condition ]
 static int parse_select(Parser *p, Statement *out) {
     SelectStatement *select = &out->as.select;
 
@@ -272,6 +303,11 @@ static int parse_select(Parser *p, Statement *out) {
 
     const Token *name = expect(p, TOKEN_IDENTIFIER, "table name");
     if (!name) {
+        return 0;
+    }
+
+    select->has_where = match(p, TOKEN_WHERE);
+    if (select->has_where && !parse_condition(p, &select->where)) {
         return 0;
     }
 

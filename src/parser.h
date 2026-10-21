@@ -35,10 +35,28 @@ typedef struct {
     int value_count;
 } InsertStatement;
 
+typedef enum {
+    CMP_EQUAL,
+    CMP_NOT_EQUAL,
+    CMP_LESS,
+    CMP_LESS_EQUAL,
+    CMP_GREATER,
+    CMP_GREATER_EQUAL
+} CompareOp;
+
+// A WHERE condition: `age > 18`.
+typedef struct {
+    char column[MAX_TOKEN_LENGTH];
+    CompareOp op;
+    Literal value;
+} Condition;
+
 typedef struct {
     int select_all;  // 1 for SELECT *, otherwise use columns.
     char columns[MAX_COLUMNS][MAX_TOKEN_LENGTH];
     int column_count;
+    int has_where;   // 1 if there's a WHERE, otherwise where is unused.
+    Condition where;
 } SelectStatement;
 
 typedef enum {
