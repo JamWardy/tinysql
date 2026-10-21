@@ -33,8 +33,13 @@ value         = [ MINUS ] NUMBER | STRING
 select_stmt   = SELECT select_list FROM IDENTIFIER [ WHERE condition ]
 select_list   = STAR | IDENTIFIER { COMMA IDENTIFIER }
 
-condition     = IDENTIFIER comparison value
-comparison    = EQUAL | NOT_EQUAL | LESS | LESS_EQUAL
+condition     = and_condition { OR and_condition }
+and_condition = not_condition { AND not_condition }
+not_condition = NOT not_condition
+              | LPAREN condition RPAREN
+              | comparison
+comparison    = IDENTIFIER compare_op value
+compare_op    = EQUAL | NOT_EQUAL | LESS | LESS_EQUAL
               | GREATER | GREATER_EQUAL
 ```
 
@@ -50,6 +55,7 @@ SELECT * FROM users;
 SELECT name, age FROM users;
 SELECT * FROM users WHERE age >= 18;
 SELECT name FROM users WHERE name != 'Bob';   -- `<>` also means not equal
+SELECT * FROM users WHERE age >= 18 AND NOT (name = 'Bob' OR id = 1);
 ```
 
 Rejected:
@@ -64,7 +70,8 @@ SELECT * FROM users                -- missing semicolon
 SELECT *, name FROM users;         -- '*' can't be mixed with columns
 SELECT * FROM users; SELECT 1;     -- one statement per line
 SELECT * FROM users WHERE 18 < age;   -- column must come first
-SELECT * FROM users WHERE age > 1 AND id = 2;  -- one condition only
+SELECT * FROM users WHERE age > 1 AND;         -- AND needs a right side
+SELECT * FROM users WHERE (age > 1;            -- unclosed '('
 ```
 
 ## Not checked by the grammar
@@ -77,6 +84,20 @@ depend on what tables exist:
 - `INSERT` has the right number of values, of the right types
 - `SELECT` names columns that exist, including the `WHERE` column
 - the `WHERE` value has the same type as its column
+
+## Combining conditions
+
+From tightest to loosest binding: `NOT`, then `AND`, then `OR`. So
+
+```sql
+WHERE a = 1 OR b = 2 AND NOT c = 3
+```
+
+means `a = 1 OR (b = 2 AND (NOT c = 3))`. Use parentheses to group
+differently. Several `AND`s or `OR`s in a row group from the left.
+
+A `WHERE` can hold at most 64 nodes, counting each comparison, `AND`, `OR`
+and `NOT` as one. Parentheses don't count.
 
 ## Comparing values
 

@@ -44,19 +44,46 @@ typedef enum {
     CMP_GREATER_EQUAL
 } CompareOp;
 
-// A WHERE condition: `age > 18`.
+// A column compared with a value: `age > 18`.
 typedef struct {
     char column[MAX_TOKEN_LENGTH];
     CompareOp op;
     Literal value;
+} Comparison;
+
+typedef enum {
+    COND_COMPARE,
+    COND_AND,
+    COND_OR,
+    COND_NOT
+} ConditionType;
+
+// One node of a WHERE condition tree. Nodes refer to their children by
+// index into SelectStatement.conditions rather than by pointer, so the
+// tree lives in a fixed-size array and there's nothing to free.
+typedef struct {
+    ConditionType type;
+    union {
+        Comparison compare;  // COND_COMPARE
+        struct {
+            int left;
+            int right;       // Unused for COND_NOT.
+        } children;          // COND_AND, COND_OR, COND_NOT
+    } as;
 } Condition;
+
+// `a = 1 AND NOT b = 2` uses four nodes: two comparisons, NOT and AND.
+#define MAX_CONDITIONS 64
 
 typedef struct {
     int select_all;  // 1 for SELECT *, otherwise use columns.
     char columns[MAX_COLUMNS][MAX_TOKEN_LENGTH];
     int column_count;
-    int has_where;   // 1 if there's a WHERE, otherwise where is unused.
-    Condition where;
+
+    int has_where;   // 1 if there's a WHERE, otherwise the rest is unused.
+    Condition conditions[MAX_CONDITIONS];
+    int condition_count;
+    int where_root;  // Index of the node for the whole condition.
 } SelectStatement;
 
 typedef enum {

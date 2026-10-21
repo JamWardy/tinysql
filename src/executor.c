@@ -90,11 +90,11 @@ static int execute_insert(Database *db, const Statement *stmt,
     return 1;
 }
 
-// A WHERE condition checked and resolved against a table.
+// A WHERE condition tree checked and resolved against a table.
 typedef struct {
-    size_t column;         // Index of the column being compared.
-    CompareOp op;
-    const Literal *value;  // Same type as the column.
+    const Condition *conditions;     // The statement's nodes.
+    size_t columns[MAX_CONDITIONS];  // Per COND_COMPARE node, its column.
+    int root;
 } Filter;
 
 // Returns <0, 0 or >0 as value is less than, equal to or greater than
@@ -109,15 +109,10 @@ static int compare(const Value *value, const Literal *lit) {
     return strcmp(value->as.text, literal_as_text(lit));
 }
 
-// A NULL filter matches every row.
-static int row_matches(const Row *row, const Filter *filter) {
-    if (!filter) {
-        return 1;
-    }
+static int comparison_matches(const Value *value, const Comparison *cmp) {
+    int c = compare(value, &cmp->value);
 
-    int c = compare(&row->values[filter->column], filter->value);
-
-    switch (filter->op) {
+    switch (cmp->op) {
         case CMP_EQUAL:         return c == 0;
         case CMP_NOT_EQUAL:     return c != 0;
         case CMP_LESS:          return c < 0;
@@ -126,6 +121,69 @@ static int row_matches(const Row *row, const Filter *filter) {
         case CMP_GREATER_EQUAL: return c >= 0;
     }
     return 0;
+}
+
+// Evaluates the condition node at index against row, recursing into
+// its children.
+static int condition_matches(const Filter *filter, const Row *row,
+                             int index) {
+    const Condition *cond = &filter->conditions[index];
+
+    switch (cond->type) {
+        case COND_COMPARE:
+            return comparison_matches(&row->values[filter->columns[index]],
+                                      &cond->as.compare);
+        case COND_AND:
+            return condition_matches(filter, row, cond->as.children.left) &&
+                   condition_matches(filter, row, cond->as.children.right);
+        case COND_OR:
+            return condition_matches(filter, row, cond->as.children.left) ||
+                   condition_matches(filter, row, cond->as.children.right);
+        case COND_NOT:
+            return !condition_matches(filter, row, cond->as.children.left);
+    }
+    return 0;
+}
+
+// A NULL filter matches every row.
+static int row_matches(const Row *row, const Filter *filter) {
+    return !filter || condition_matches(filter, row, filter->root);
+}
+
+// Checks every comparison in select's WHERE against table and fills
+// filter. Done before any row is read, so a bad column or type is
+// reported even when no row would reach that part of the condition.
+static int resolve_filter(const Table *table, const SelectStatement *select,
+                          Filter *filter, char *error, size_t error_size) {
+    filter->conditions = select->conditions;
+    filter->root = select->where_root;
+
+    for (int i = 0; i < select->condition_count; i++) {
+        if (select->conditions[i].type != COND_COMPARE) {
+            continue;
+        }
+
+        const Comparison *cmp = &select->conditions[i].as.compare;
+        int index = table_find_column(table, cmp->column);
+
+        if (index < 0) {
+            snprintf(error, error_size, "no such column '%s'", cmp->column);
+            return 0;
+        }
+
+        const Column *column = &table->columns[index];
+        if (cmp->value.type != column->type) {
+            snprintf(error, error_size,
+                     "column '%s' is %s but the WHERE value is %s",
+                     column->name, data_type_name(column->type),
+                     data_type_name(cmp->value.type));
+            return 0;
+        }
+
+        filter->columns[i] = (size_t)index;
+    }
+
+    return 1;
 }
 
 // Number of characters the value takes when printed.
@@ -238,28 +296,9 @@ static int execute_select(Database *db, const Statement *stmt,
 
     Filter filter;
 
-    if (select->has_where) {
-        const Condition *where = &select->where;
-        int index = table_find_column(table, where->column);
-
-        if (index < 0) {
-            snprintf(error, error_size, "no such column '%s'",
-                     where->column);
-            return 0;
-        }
-
-        const Column *column = &table->columns[index];
-        if (where->value.type != column->type) {
-            snprintf(error, error_size,
-                     "column '%s' is %s but the WHERE value is %s",
-                     column->name, data_type_name(column->type),
-                     data_type_name(where->value.type));
-            return 0;
-        }
-
-        filter.column = (size_t)index;
-        filter.op = where->op;
-        filter.value = &where->value;
+    if (select->has_where &&
+        !resolve_filter(table, select, &filter, error, error_size)) {
+        return 0;
     }
 
     print_rows(table, columns, column_count,

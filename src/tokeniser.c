@@ -29,6 +29,9 @@ const char *token_type_name(TokenType type) {
         case TOKEN_SELECT:         return "SELECT";
         case TOKEN_FROM:           return "FROM";
         case TOKEN_WHERE:          return "WHERE";
+        case TOKEN_AND:            return "AND";
+        case TOKEN_OR:             return "OR";
+        case TOKEN_NOT:            return "NOT";
         case TOKEN_INT:            return "INT";
         case TOKEN_TEXT:           return "TEXT";
         case TOKEN_EOF:            return "EOF";
@@ -50,6 +53,9 @@ static const Keyword keywords[] = {
     { "SELECT", TOKEN_SELECT },
     { "FROM",   TOKEN_FROM },
     { "WHERE",  TOKEN_WHERE },
+    { "AND",    TOKEN_AND },
+    { "OR",     TOKEN_OR },
+    { "NOT",    TOKEN_NOT },
     { "INT",    TOKEN_INT },
     { "TEXT",   TOKEN_TEXT },
 };
