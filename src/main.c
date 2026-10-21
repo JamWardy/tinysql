@@ -5,7 +5,7 @@
 #include "parser.h"
 #include "persist.h"
 #include "table.h"
-#include "tokenizer.h"
+#include "tokeniser.h"
 
 #define MAX_INPUT 1024
 #define MAX_ERROR 256
@@ -74,7 +74,7 @@ int main(int argc, char **argv) {
             break;
         }
 
-        if (!tokenize(input, &tokens, error, sizeof(error))) {
+        if (!tokenise(input, &tokens, error, sizeof(error))) {
             printf("Error: %s\n", error);
             continue;
         }

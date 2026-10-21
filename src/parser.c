@@ -17,7 +17,7 @@ typedef struct {
 
 // Returns the current token without consuming it.
 static const Token *peek(const Parser *p) {
-    // The tokenizer guarantees the list ends in EOF, and nothing consumes
+    // The tokeniser guarantees the list ends in EOF, and nothing consumes
     // EOF, so pos can only run past the end if the parser has a bug.
     assert(p->pos < p->tokens->count);
     return &p->tokens->tokens[p->pos];
@@ -163,7 +163,7 @@ static int parse_value(Parser *p, Literal *out) {
         snprintf(text, sizeof(text), "%s%s", negative ? "-" : "",
                  token->text);
 
-        // The tokenizer only accepts digits, so the whole text converts;
+        // The tokeniser only accepts digits, so the whole text converts;
         // the remaining failure is a number too big for a long long.
         errno = 0;
         long long n = strtoll(text, NULL, 10);

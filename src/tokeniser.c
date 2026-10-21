@@ -1,4 +1,4 @@
-#include "tokenizer.h"
+#include "tokeniser.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -118,7 +118,7 @@ static int add_token(
     return 1;
 }
 
-int tokenize(const char *sql, TokenList *list, char *error, size_t error_size) {
+int tokenise(const char *sql, TokenList *list, char *error, size_t error_size) {
     int i = 0;
 
     list->count = 0;

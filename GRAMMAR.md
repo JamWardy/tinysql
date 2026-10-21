@@ -1,7 +1,7 @@
 # TinySQL grammar
 
 The SQL subset the parser accepts. Each rule is written in terms of the
-token types produced by the tokenizer in `src/tokenizer.h`.
+token types produced by the tokeniser in `src/tokeniser.h`.
 
 ## Notation
 

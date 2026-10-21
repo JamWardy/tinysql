@@ -218,7 +218,7 @@ static int read_chars(Reader *r, char *out, size_t length) {
 }
 
 // Reads a table or column name into a buffer of MAX_TOKEN_LENGTH, the
-// same limit the tokenizer puts on names typed in SQL.
+// same limit the tokeniser puts on names typed in SQL.
 static int read_name(Reader *r, char *out) {
     size_t length;
 

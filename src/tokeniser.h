@@ -1,5 +1,5 @@
-#ifndef TINYSQL_TOKENIZER_H
-#define TINYSQL_TOKENIZER_H
+#ifndef TINYSQL_TOKENISER_H
+#define TINYSQL_TOKENISER_H
 
 #include <stddef.h>
 
@@ -48,7 +48,7 @@ typedef struct {
 // Splits sql into tokens. On success, fills list (always ending in
 // TOKEN_EOF) and returns 1. On failure, writes a message to error and
 // returns 0; list must not be used.
-int tokenize(const char *sql, TokenList *list, char *error, size_t error_size);
+int tokenise(const char *sql, TokenList *list, char *error, size_t error_size);
 const char *token_type_name(TokenType type);
 
 #endif

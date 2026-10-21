@@ -1,7 +1,7 @@
 #ifndef TINYSQL_PARSER_H
 #define TINYSQL_PARSER_H
 
-#include "tokenizer.h"
+#include "tokeniser.h"
 
 #define MAX_COLUMNS 32
 
