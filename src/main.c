@@ -3,6 +3,7 @@
 
 #include "executor.h"
 #include "parser.h"
+#include "persist.h"
 #include "table.h"
 #include "tokenizer.h"
 
@@ -17,16 +18,37 @@ static void skip_line(void) {
     }
 }
 
-int main(void) {
+int main(int argc, char **argv) {
     char input[MAX_INPUT];
     char error[MAX_ERROR];
     static TokenList tokens;  // Large, so keep these off the stack.
     static Statement stmt;
     Database db;
+    const char *path = NULL;  // NULL: keep the database in memory only.
+
+    if (argc > 2) {
+        fprintf(stderr, "Usage: %s [database-file]\n", argv[0]);
+        return 1;
+    }
 
     database_init(&db);
 
+    // Stop if the file can't be loaded; carrying on with an empty
+    // database would overwrite the file at the first change.
+    if (argc == 2) {
+        path = argv[1];
+        if (!database_load(&db, path, error, sizeof(error))) {
+            fprintf(stderr, "Error: cannot load '%s': %s\n", path, error);
+            return 1;
+        }
+    }
+
     puts("TinySQL — experimental database");
+    if (path) {
+        printf("Database file: %s\n", path);
+    } else {
+        puts("In-memory database; pass a file name to keep your data.");
+    }
     puts("Type .exit to quit.");
 
     while (1) {
@@ -69,6 +91,16 @@ int main(void) {
 
         if (!execute(&db, &stmt, error, sizeof(error))) {
             printf("Error: %s\n", error);
+            continue;
+        }
+
+        // Rewrite the file after every change, so stopping the program
+        // at any point loses nothing that succeeded.
+        if (path && stmt.type != STMT_SELECT &&
+            !database_save(&db, path, error, sizeof(error))) {
+            printf("Error: change not saved: %s\n"
+                   "It's kept in memory and will be saved with the next "
+                   "change that saves successfully.\n", error);
         }
     }
 
