@@ -14,6 +14,7 @@ const char *token_type_name(TokenType type) {
         case TOKEN_COMMA:          return "COMMA";
         case TOKEN_SEMICOLON:      return "SEMICOLON";
         case TOKEN_STAR:           return "STAR";
+        case TOKEN_MINUS:          return "MINUS";
         case TOKEN_EQUAL:          return "EQUAL";
         case TOKEN_NOT_EQUAL:      return "NOT_EQUAL";
         case TOKEN_LESS:           return "LESS";
@@ -199,6 +200,7 @@ int tokenize(const char *sql, TokenList *list, char *error, size_t error_size) {
                 case ',': type = TOKEN_COMMA; break;
                 case ';': type = TOKEN_SEMICOLON; break;
                 case '*': type = TOKEN_STAR; break;
+                case '-': type = TOKEN_MINUS; break;
                 case '=': type = TOKEN_EQUAL; break;
                 case '<': type = TOKEN_LESS; break;
                 case '>': type = TOKEN_GREATER; break;

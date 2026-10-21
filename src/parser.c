@@ -150,27 +150,36 @@ static int parse_create(Parser *p, Statement *out) {
     return 1;
 }
 
-// value = NUMBER | STRING
+// value = [ MINUS ] NUMBER | STRING
 static int parse_value(Parser *p, Literal *out) {
+    int negative = match(p, TOKEN_MINUS);
     const Token *token = peek(p);
 
     if (token->type == TOKEN_NUMBER) {
+        // Convert the sign and digits together rather than negating
+        // afterwards: the most negative long long has no positive
+        // counterpart, so it can't be read as positive first.
+        char text[MAX_TOKEN_LENGTH + 1];
+        snprintf(text, sizeof(text), "%s%s", negative ? "-" : "",
+                 token->text);
+
         // The tokenizer only accepts digits, so the whole text converts;
         // the remaining failure is a number too big for a long long.
         errno = 0;
-        long long n = strtoll(token->text, NULL, 10);
+        long long n = strtoll(text, NULL, 10);
 
         if (errno == ERANGE) {
             snprintf(p->error, sizeof(p->error),
-                     "number out of range: %s", token->text);
+                     "number out of range: %s", text);
             return 0;
         }
 
         *out = literal_int(n);
-    } else if (token->type == TOKEN_STRING) {
+    } else if (token->type == TOKEN_STRING && !negative) {
         *out = literal_text(token->text);
     } else {
-        error_expected(p, "value (number or 'text')");
+        error_expected(p, negative ? "number after '-'"
+                                   : "value (number or 'text')");
         return 0;
     }
 

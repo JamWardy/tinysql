@@ -15,6 +15,7 @@ typedef enum {
     TOKEN_COMMA,
     TOKEN_SEMICOLON,
     TOKEN_STAR,
+    TOKEN_MINUS,
     TOKEN_EQUAL,
     TOKEN_NOT_EQUAL,
     TOKEN_LESS,

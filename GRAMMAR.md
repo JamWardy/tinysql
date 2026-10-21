@@ -28,7 +28,7 @@ column_type   = INT | TEXT
 insert_stmt   = INSERT INTO IDENTIFIER
                 VALUES LPAREN value { COMMA value } RPAREN
 
-value         = NUMBER | STRING
+value         = [ MINUS ] NUMBER | STRING
 
 select_stmt   = SELECT select_list FROM IDENTIFIER [ WHERE condition ]
 select_list   = STAR | IDENTIFIER { COMMA IDENTIFIER }
@@ -45,6 +45,7 @@ Accepted:
 ```sql
 CREATE TABLE users (id INT, name TEXT, age INT);
 INSERT INTO users VALUES (1, 'Alice', 25);
+INSERT INTO users VALUES (-3, 'Eve', 30);
 SELECT * FROM users;
 SELECT name, age FROM users;
 SELECT * FROM users WHERE age >= 18;
@@ -57,6 +58,8 @@ Rejected:
 CREATE TABLE users ();             -- needs at least one column
 CREATE TABLE users (id INTEGER);   -- type must be INT or TEXT
 INSERT INTO users VALUES (1, 2,);  -- trailing comma
+INSERT INTO users VALUES (--1);    -- only one '-'
+INSERT INTO users VALUES (-'a');   -- '-' only before a number
 SELECT * FROM users                -- missing semicolon
 SELECT *, name FROM users;         -- '*' can't be mixed with columns
 SELECT * FROM users; SELECT 1;     -- one statement per line
