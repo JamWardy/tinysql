@@ -165,3 +165,16 @@ int table_append_row(Table *table, const Value *values) {
     row->count = table->column_count;
     return 1;
 }
+
+void table_delete_row(Table *table, size_t index) {
+    assert(index < table->row_count);
+
+    Row *row = &table->rows[index];
+    free_values(row->values, row->count);
+    free(row->values);
+
+    // Close the gap. The array keeps its capacity for later inserts.
+    memmove(row, row + 1,
+            (table->row_count - index - 1) * sizeof(*row));
+    table->row_count--;
+}

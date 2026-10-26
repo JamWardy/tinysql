@@ -150,20 +150,20 @@ static int row_matches(const Row *row, const Filter *filter) {
     return !filter || condition_matches(filter, row, filter->root);
 }
 
-// Checks every comparison in select's WHERE against table and fills
-// filter. Done before any row is read, so a bad column or type is
-// reported even when no row would reach that part of the condition.
-static int resolve_filter(const Table *table, const SelectStatement *select,
+// Checks every comparison in where against table and fills filter.
+// Done before any row is read, so a bad column or type is reported
+// even when no row would reach that part of the condition.
+static int resolve_filter(const Table *table, const WhereClause *where,
                           Filter *filter, char *error, size_t error_size) {
-    filter->conditions = select->conditions;
-    filter->root = select->where_root;
+    filter->conditions = where->conditions;
+    filter->root = where->root;
 
-    for (int i = 0; i < select->condition_count; i++) {
-        if (select->conditions[i].type != COND_COMPARE) {
+    for (int i = 0; i < where->condition_count; i++) {
+        if (where->conditions[i].type != COND_COMPARE) {
             continue;
         }
 
-        const Comparison *cmp = &select->conditions[i].as.compare;
+        const Comparison *cmp = &where->conditions[i].as.compare;
         int index = table_find_column(table, cmp->column);
 
         if (index < 0) {
@@ -297,12 +297,50 @@ static int execute_select(Database *db, const Statement *stmt,
     Filter filter;
 
     if (select->has_where &&
-        !resolve_filter(table, select, &filter, error, error_size)) {
+        !resolve_filter(table, &select->where, &filter, error, error_size)) {
         return 0;
     }
 
     print_rows(table, columns, column_count,
                select->has_where ? &filter : NULL);
+    return 1;
+}
+
+static int execute_delete(Database *db, const Statement *stmt,
+                          char *error, size_t error_size) {
+    const DeleteStatement *delete = &stmt->as.delete;
+    Table *table = database_find_table(db, stmt->table_name);
+
+    if (!table) {
+        snprintf(error, error_size, "no such table '%s'", stmt->table_name);
+        return 0;
+    }
+
+    // As in SELECT, check the whole WHERE before touching any row, so a
+    // bad column can't leave a delete half done.
+    Filter filter;
+
+    if (delete->has_where &&
+        !resolve_filter(table, &delete->where, &filter, error, error_size)) {
+        return 0;
+    }
+
+    const Filter *f = delete->has_where ? &filter : NULL;
+    size_t deleted = 0;
+    size_t r = 0;
+
+    // Only move on when the row is kept: deleting shifts the next row
+    // into position r.
+    while (r < table->row_count) {
+        if (row_matches(&table->rows[r], f)) {
+            table_delete_row(table, r);
+            deleted++;
+        } else {
+            r++;
+        }
+    }
+
+    printf("(%zu %s deleted)\n", deleted, deleted == 1 ? "row" : "rows");
     return 1;
 }
 
@@ -315,6 +353,8 @@ int execute(Database *db, const Statement *stmt,
             return execute_insert(db, stmt, error, error_size);
         case STMT_SELECT:
             return execute_select(db, stmt, error, error_size);
+        case STMT_DELETE:
+            return execute_delete(db, stmt, error, error_size);
     }
 
     snprintf(error, error_size, "unknown statement type");

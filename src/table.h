@@ -11,7 +11,8 @@
 //
 // Arrays grow with realloc, which may move them. A Table * is valid only
 // until the next database_create_table, and a Row * only until the next
-// table_append_row on its table; look them up again after either.
+// table_append_row or table_delete_row on its table; look them up again
+// after any of these.
 
 typedef struct {
     char *name;
@@ -70,5 +71,9 @@ int table_find_column(const Table *table, const char *name);
 // values whose types match the columns; the caller validates first.
 // Returns 1, or 0 if memory ran out (table is unchanged).
 int table_append_row(Table *table, const Value *values);
+
+// Frees the row at index and moves every later row down one place, so
+// the rest keep their order. index must be less than row_count.
+void table_delete_row(Table *table, size_t index);
 
 #endif

@@ -299,66 +299,66 @@ static int parse_comparison(Parser *p, Comparison *out) {
 
 // Claims the next free condition node and sets its type. Children are
 // claimed before their parent, so a parent's index is always higher.
-static int new_condition(Parser *p, SelectStatement *select,
+static int new_condition(Parser *p, WhereClause *where,
                          ConditionType type, int *out) {
-    if (select->condition_count == MAX_CONDITIONS) {
+    if (where->condition_count == MAX_CONDITIONS) {
         snprintf(p->error, sizeof(p->error),
                  "WHERE is too complex (max %d conditions)", MAX_CONDITIONS);
         return 0;
     }
 
-    *out = select->condition_count++;
-    select->conditions[*out].type = type;
+    *out = where->condition_count++;
+    where->conditions[*out].type = type;
     return 1;
 }
 
 // Claims an AND or OR node joining left and right.
-static int join_conditions(Parser *p, SelectStatement *select,
+static int join_conditions(Parser *p, WhereClause *where,
                            ConditionType type, int left, int right,
                            int *out) {
-    if (!new_condition(p, select, type, out)) {
+    if (!new_condition(p, where, type, out)) {
         return 0;
     }
 
-    select->conditions[*out].as.children.left = left;
-    select->conditions[*out].as.children.right = right;
+    where->conditions[*out].as.children.left = left;
+    where->conditions[*out].as.children.right = right;
     return 1;
 }
 
 // The condition rules call each other, from loosest to tightest binding.
 // Each one fills *out with the index of the node it built.
-static int parse_condition(Parser *p, SelectStatement *select, int *out);
+static int parse_condition(Parser *p, WhereClause *where, int *out);
 
 // not_condition = NOT not_condition
 //               | LPAREN condition RPAREN
 //               | comparison
-static int parse_not_condition(Parser *p, SelectStatement *select,
+static int parse_not_condition(Parser *p, WhereClause *where,
                                int *out) {
     if (match(p, TOKEN_NOT)) {
         int operand;
 
-        if (!parse_not_condition(p, select, &operand) ||
-            !new_condition(p, select, COND_NOT, out)) {
+        if (!parse_not_condition(p, where, &operand) ||
+            !new_condition(p, where, COND_NOT, out)) {
             return 0;
         }
 
-        select->conditions[*out].as.children.left = operand;
+        where->conditions[*out].as.children.left = operand;
         return 1;
     }
 
     if (match(p, TOKEN_LPAREN)) {
-        return parse_condition(p, select, out) &&
+        return parse_condition(p, where, out) &&
                expect(p, TOKEN_RPAREN, "AND, OR or ')'") != NULL;
     }
 
-    return new_condition(p, select, COND_COMPARE, out) &&
-           parse_comparison(p, &select->conditions[*out].as.compare);
+    return new_condition(p, where, COND_COMPARE, out) &&
+           parse_comparison(p, &where->conditions[*out].as.compare);
 }
 
 // and_condition = not_condition { AND not_condition }
-static int parse_and_condition(Parser *p, SelectStatement *select,
+static int parse_and_condition(Parser *p, WhereClause *where,
                                int *out) {
-    if (!parse_not_condition(p, select, out)) {
+    if (!parse_not_condition(p, where, out)) {
         return 0;
     }
 
@@ -367,8 +367,8 @@ static int parse_and_condition(Parser *p, SelectStatement *select,
     while (match(p, TOKEN_AND)) {
         int right;
 
-        if (!parse_not_condition(p, select, &right) ||
-            !join_conditions(p, select, COND_AND, *out, right, out)) {
+        if (!parse_not_condition(p, where, &right) ||
+            !join_conditions(p, where, COND_AND, *out, right, out)) {
             return 0;
         }
     }
@@ -380,18 +380,42 @@ static int parse_and_condition(Parser *p, SelectStatement *select,
 //
 // OR is parsed outermost, so AND binds tighter:
 // `a OR b AND c` means `a OR (b AND c)`.
-static int parse_condition(Parser *p, SelectStatement *select, int *out) {
-    if (!parse_and_condition(p, select, out)) {
+static int parse_condition(Parser *p, WhereClause *where, int *out) {
+    if (!parse_and_condition(p, where, out)) {
         return 0;
     }
 
     while (match(p, TOKEN_OR)) {
         int right;
 
-        if (!parse_and_condition(p, select, &right) ||
-            !join_conditions(p, select, COND_OR, *out, right, out)) {
+        if (!parse_and_condition(p, where, &right) ||
+            !join_conditions(p, where, COND_OR, *out, right, out)) {
             return 0;
         }
+    }
+
+    return 1;
+}
+
+// [ WHERE condition ], the end of SELECT and DELETE. Sets *has_where to
+// whether there was one.
+static int parse_where(Parser *p, int *has_where, WhereClause *where) {
+    *has_where = match(p, TOKEN_WHERE);
+    where->condition_count = 0;
+
+    if (!*has_where) {
+        return 1;
+    }
+
+    if (!parse_condition(p, where, &where->root)) {
+        return 0;
+    }
+
+    // A condition can always be extended, so name those options
+    // rather than the bare "expected ';'" from parse.
+    if (peek(p)->type != TOKEN_SEMICOLON) {
+        error_expected(p, "AND, OR or ';'");
+        return 0;
     }
 
     return 1;
@@ -416,20 +440,8 @@ static int parse_select(Parser *p, Statement *out) {
         return 0;
     }
 
-    select->has_where = match(p, TOKEN_WHERE);
-    select->condition_count = 0;
-
-    if (select->has_where) {
-        if (!parse_condition(p, select, &select->where_root)) {
-            return 0;
-        }
-
-        // A condition can always be extended, so name those options
-        // rather than the bare "expected ';'" from parse.
-        if (peek(p)->type != TOKEN_SEMICOLON) {
-            error_expected(p, "AND, OR or ';'");
-            return 0;
-        }
+    if (!parse_where(p, &select->has_where, &select->where)) {
+        return 0;
     }
 
     out->type = STMT_SELECT;
@@ -437,7 +449,32 @@ static int parse_select(Parser *p, Statement *out) {
     return 1;
 }
 
-// statement = ( create_stmt | insert_stmt | select_stmt ) SEMICOLON EOF
+// delete_stmt = DELETE FROM IDENTIFIER [ WHERE condition ]
+static int parse_delete(Parser *p, Statement *out) {
+    DeleteStatement *delete = &out->as.delete;
+
+    if (!expect(p, TOKEN_DELETE, "DELETE") ||
+        !expect(p, TOKEN_FROM, "FROM")) {
+        return 0;
+    }
+
+    const Token *name = expect(p, TOKEN_IDENTIFIER, "table name");
+    if (!name) {
+        return 0;
+    }
+
+    // Without a WHERE, the next token must be ';'.
+    if (!parse_where(p, &delete->has_where, &delete->where)) {
+        return 0;
+    }
+
+    out->type = STMT_DELETE;
+    snprintf(out->table_name, sizeof(out->table_name), "%s", name->text);
+    return 1;
+}
+
+// statement = ( create_stmt | insert_stmt | select_stmt | delete_stmt )
+//             SEMICOLON EOF
 int parse(const TokenList *tokens, Statement *out,
           char *error, size_t error_size) {
     Parser p = { tokens, 0, "" };
@@ -456,8 +493,12 @@ int parse(const TokenList *tokens, Statement *out,
             ok = parse_select(&p, out);
             break;
 
+        case TOKEN_DELETE:
+            ok = parse_delete(&p, out);
+            break;
+
         default:
-            error_expected(&p, "CREATE, INSERT or SELECT");
+            error_expected(&p, "CREATE, INSERT, SELECT or DELETE");
             ok = 0;
             break;
     }
