@@ -397,24 +397,81 @@ static int parse_condition(Parser *p, WhereClause *where, int *out) {
     return 1;
 }
 
-// [ WHERE condition ], the end of SELECT and DELETE. Sets *has_where to
+// [ WHERE condition ], in SELECT, UPDATE and DELETE. Sets *has_where to
 // whether there was one.
 static int parse_where(Parser *p, int *has_where, WhereClause *where) {
     *has_where = match(p, TOKEN_WHERE);
     where->condition_count = 0;
 
-    if (!*has_where) {
-        return 1;
-    }
+    return !*has_where || parse_condition(p, where, &where->root);
+}
 
-    if (!parse_condition(p, where, &where->root)) {
+// Checks that the statement ends here. parse would also catch a missing
+// ';', but only the statement knows what else could have come next, e.g.
+// "AND, OR or ';'" after a condition, so it names those options.
+static int expect_end(Parser *p, const char *options) {
+    if (peek(p)->type != TOKEN_SEMICOLON) {
+        error_expected(p, options);
         return 0;
     }
 
-    // A condition can always be extended, so name those options
-    // rather than the bare "expected ';'" from parse.
-    if (peek(p)->type != TOKEN_SEMICOLON) {
-        error_expected(p, "AND, OR or ';'");
+    return 1;
+}
+
+// [ ORDER BY IDENTIFIER [ ASC | DESC ] ]
+// Sets *explicit_direction if ASC or DESC was written, for the error
+// message in parse_select.
+static int parse_order_by(Parser *p, SelectStatement *select,
+                          int *explicit_direction) {
+    select->has_order = match(p, TOKEN_ORDER);
+    select->descending = 0;
+    *explicit_direction = 0;
+
+    if (!select->has_order) {
+        return 1;
+    }
+
+    if (!expect(p, TOKEN_BY, "BY")) {
+        return 0;
+    }
+
+    const Token *column = expect(p, TOKEN_IDENTIFIER, "column name");
+    if (!column) {
+        return 0;
+    }
+    snprintf(select->order_column, sizeof(select->order_column),
+             "%s", column->text);
+
+    if (match(p, TOKEN_DESC)) {
+        select->descending = 1;
+        *explicit_direction = 1;
+    } else if (match(p, TOKEN_ASC)) {
+        *explicit_direction = 1;
+    }
+
+    return 1;
+}
+
+// [ LIMIT NUMBER ]
+static int parse_limit(Parser *p, SelectStatement *select) {
+    select->has_limit = match(p, TOKEN_LIMIT);
+
+    if (!select->has_limit) {
+        return 1;
+    }
+
+    // NUMBER is only digits, so a negative LIMIT fails here.
+    const Token *number = expect(p, TOKEN_NUMBER, "number");
+    if (!number) {
+        return 0;
+    }
+
+    errno = 0;
+    select->limit = strtoll(number->text, NULL, 10);
+
+    if (errno == ERANGE) {
+        snprintf(p->error, sizeof(p->error),
+                 "number out of range: %s", number->text);
         return 0;
     }
 
@@ -422,6 +479,7 @@ static int parse_where(Parser *p, int *has_where, WhereClause *where) {
 }
 
 // select_stmt = SELECT select_list FROM IDENTIFIER [ WHERE condition ]
+//               [ ORDER BY IDENTIFIER [ ASC | DESC ] ] [ LIMIT NUMBER ]
 static int parse_select(Parser *p, Statement *out) {
     SelectStatement *select = &out->as.select;
 
@@ -440,7 +498,30 @@ static int parse_select(Parser *p, Statement *out) {
         return 0;
     }
 
-    if (!parse_where(p, &select->has_where, &select->where)) {
+    int explicit_direction;
+
+    if (!parse_where(p, &select->has_where, &select->where) ||
+        !parse_order_by(p, select, &explicit_direction) ||
+        !parse_limit(p, select)) {
+        return 0;
+    }
+
+    // What could have continued the statement depends on the last
+    // clause written.
+    const char *options;
+
+    if (select->has_limit) {
+        options = "';'";
+    } else if (select->has_order) {
+        options = explicit_direction ? "LIMIT or ';'"
+                                     : "ASC, DESC, LIMIT or ';'";
+    } else if (select->has_where) {
+        options = "AND, OR, ORDER BY, LIMIT or ';'";
+    } else {
+        options = "WHERE, ORDER BY, LIMIT or ';'";
+    }
+
+    if (!expect_end(p, options)) {
         return 0;
     }
 
@@ -463,8 +544,9 @@ static int parse_delete(Parser *p, Statement *out) {
         return 0;
     }
 
-    // Without a WHERE, the next token must be ';'.
-    if (!parse_where(p, &delete->has_where, &delete->where)) {
+    if (!parse_where(p, &delete->has_where, &delete->where) ||
+        !expect_end(p, delete->has_where ? "AND, OR or ';'"
+                                         : "WHERE or ';'")) {
         return 0;
     }
 
@@ -524,15 +606,9 @@ static int parse_update(Parser *p, Statement *out) {
         update->assignment_count++;
     } while (match(p, TOKEN_COMMA));
 
-    // Name every option here, rather than the bare "expected ';'" from
-    // parse.
-    TokenType next = peek(p)->type;
-    if (next != TOKEN_WHERE && next != TOKEN_SEMICOLON) {
-        error_expected(p, "',', WHERE or ';'");
-        return 0;
-    }
-
-    if (!parse_where(p, &update->has_where, &update->where)) {
+    if (!parse_where(p, &update->has_where, &update->where) ||
+        !expect_end(p, update->has_where ? "AND, OR or ';'"
+                                         : "',', WHERE or ';'")) {
         return 0;
     }
 

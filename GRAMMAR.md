@@ -32,6 +32,7 @@ insert_stmt   = INSERT INTO IDENTIFIER
 value         = [ MINUS ] NUMBER | STRING
 
 select_stmt   = SELECT select_list FROM IDENTIFIER [ WHERE condition ]
+                [ ORDER BY IDENTIFIER [ ASC | DESC ] ] [ LIMIT NUMBER ]
 select_list   = STAR | IDENTIFIER { COMMA IDENTIFIER }
 
 delete_stmt   = DELETE FROM IDENTIFIER [ WHERE condition ]
@@ -65,6 +66,8 @@ SELECT name, age FROM users;
 SELECT * FROM users WHERE age >= 18;
 SELECT name FROM users WHERE name != 'Bob';   -- `<>` also means not equal
 SELECT * FROM users WHERE age >= 18 AND NOT (name = 'Bob' OR id = 1);
+SELECT name FROM users ORDER BY age DESC LIMIT 3;
+SELECT * FROM users WHERE age > 18 ORDER BY name;  -- ASC is the default
 DELETE FROM users WHERE age < 18;
 DELETE FROM users;                            -- deletes every row
 UPDATE users SET age = 26 WHERE name = 'Alice';
@@ -86,6 +89,9 @@ SELECT * FROM users; SELECT 1;     -- one statement per line
 SELECT * FROM users WHERE 18 < age;   -- column must come first
 SELECT * FROM users WHERE age > 1 AND;         -- AND needs a right side
 SELECT * FROM users WHERE (age > 1;            -- unclosed '('
+SELECT * FROM users LIMIT 3 ORDER BY age;      -- ORDER BY comes first
+SELECT * FROM users ORDER BY age, name;        -- one sort column only
+SELECT * FROM users LIMIT -1;                  -- LIMIT can't be negative
 DELETE users WHERE id = 1;                     -- needs FROM
 DELETE * FROM users;                           -- no column list
 UPDATE users age = 26;                         -- needs SET
@@ -104,7 +110,7 @@ depend on what tables exist:
 - `INSERT` has the right number of values, of the right types
 - `UPDATE` sets columns that exist, each at most once, to values of the
   right types
-- `SELECT` names columns that exist
+- `SELECT` names columns that exist, including the `ORDER BY` column
 - the `WHERE` columns exist, in `SELECT`, `UPDATE` and `DELETE`
 - each `WHERE` value has the same type as its column
 
@@ -127,3 +133,10 @@ and `NOT` as one. Parentheses don't count.
 `INT` values compare as numbers. `TEXT` values compare byte by byte, so
 uppercase sorts before lowercase (`'B' < 'a'`) and digits compare as
 characters (`'10' < '9'`).
+
+## Ordering and limiting
+
+`SELECT` filters with `WHERE`, then sorts with `ORDER BY`, then keeps
+the first `LIMIT` rows. Without `ORDER BY`, rows come out in the order
+they were inserted. Rows with equal sort values also keep that order.
+The `ORDER BY` column doesn't have to be one of the selected columns.

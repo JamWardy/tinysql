@@ -89,6 +89,14 @@ typedef struct {
 
     int has_where;   // 1 if there's a WHERE, otherwise where is unused.
     WhereClause where;
+
+    int has_order;   // 1 if there's an ORDER BY, otherwise rows keep
+                     // the order they were inserted in.
+    char order_column[MAX_TOKEN_LENGTH];
+    int descending;  // 1 for DESC; ASC is the default.
+
+    int has_limit;   // 1 if there's a LIMIT, otherwise every row.
+    long long limit; // Never negative.
 } SelectStatement;
 
 typedef struct {

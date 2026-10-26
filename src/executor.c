@@ -1,6 +1,7 @@
 #include "executor.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static const char *data_type_name(DataType type) {
@@ -106,20 +107,22 @@ typedef struct {
     int root;
 } Filter;
 
-// Returns <0, 0 or >0 as value is less than, equal to or greater than
-// lit. Text compares byte by byte, so 'B' < 'a' and '10' < '9'.
-static int compare(const Value *value, const Literal *lit) {
-    if (value->type == TYPE_INT) {
-        long long a = value->as.integer;
-        long long b = literal_as_int(lit);
-        return (a > b) - (a < b);
+// Returns <0, 0 or >0 as a is less than, equal to or greater than b,
+// which must have the same type. Text compares byte by byte, so
+// 'B' < 'a' and '10' < '9'.
+static int compare_values(const Value *a, const Value *b) {
+    if (a->type == TYPE_INT) {
+        long long x = a->as.integer;
+        long long y = b->as.integer;
+        return (x > y) - (x < y);
     }
 
-    return strcmp(value->as.text, literal_as_text(lit));
+    return strcmp(a->as.text, b->as.text);
 }
 
 static int comparison_matches(const Value *value, const Comparison *cmp) {
-    int c = compare(value, &cmp->value);
+    Value wanted = literal_to_value(&cmp->value);
+    int c = compare_values(value, &wanted);
 
     switch (cmp->op) {
         case CMP_EQUAL:         return c == 0;
@@ -212,25 +215,22 @@ static void print_value(const Value *value, int width) {
     }
 }
 
-// Prints the chosen columns of every row that matches filter, e.g.
+// Prints the chosen columns of rows, in order, e.g.
 //
 //   name  | age
 //   ------+----
 //   Alice |  25
 //   (1 row)
 static void print_rows(const Table *table, const size_t *columns,
-                       int column_count, const Filter *filter) {
+                       int column_count, const Row *const *rows,
+                       size_t row_count) {
     int widths[MAX_COLUMNS];
 
     for (int i = 0; i < column_count; i++) {
         widths[i] = (int)strlen(table->columns[columns[i]].name);
 
-        for (size_t r = 0; r < table->row_count; r++) {
-            if (!row_matches(&table->rows[r], filter)) {
-                continue;
-            }
-
-            int width = value_width(&table->rows[r].values[columns[i]]);
+        for (size_t r = 0; r < row_count; r++) {
+            int width = value_width(&rows[r]->values[columns[i]]);
             if (width > widths[i]) {
                 widths[i] = width;
             }
@@ -251,22 +251,41 @@ static void print_rows(const Table *table, const size_t *columns,
     }
     putchar('\n');
 
-    size_t printed = 0;
-
-    for (size_t r = 0; r < table->row_count; r++) {
-        if (!row_matches(&table->rows[r], filter)) {
-            continue;
-        }
-
+    for (size_t r = 0; r < row_count; r++) {
         for (int i = 0; i < column_count; i++) {
             printf("%s", i > 0 ? " | " : "");
-            print_value(&table->rows[r].values[columns[i]], widths[i]);
+            print_value(&rows[r]->values[columns[i]], widths[i]);
         }
         putchar('\n');
-        printed++;
     }
 
-    printf("(%zu %s)\n", printed, printed == 1 ? "row" : "rows");
+    printf("(%zu %s)\n", row_count, row_count == 1 ? "row" : "rows");
+}
+
+// qsort passes its comparison function only the two elements, so the
+// ORDER BY column and direction are set here just before sorting.
+static struct {
+    size_t column;
+    int descending;
+} sort_by;
+
+// Compares two elements of an array of const Row *.
+static int compare_rows(const void *a, const void *b) {
+    const Row *x = *(const Row *const *)a;
+    const Row *y = *(const Row *const *)b;
+    int c = compare_values(&x->values[sort_by.column],
+                           &y->values[sort_by.column]);
+
+    if (sort_by.descending) {
+        c = -c;
+    }
+
+    // qsort may reorder equal elements, so break ties by position in
+    // the table (the rows are one array), keeping insertion order.
+    if (c == 0) {
+        c = (x > y) - (x < y);
+    }
+    return c;
 }
 
 static int execute_select(Database *db, const Statement *stmt,
@@ -310,8 +329,51 @@ static int execute_select(Database *db, const Statement *stmt,
         return 0;
     }
 
-    print_rows(table, columns, column_count,
-               select->has_where ? &filter : NULL);
+    int order_column = -1;
+
+    if (select->has_order) {
+        order_column = table_find_column(table, select->order_column);
+
+        if (order_column < 0) {
+            snprintf(error, error_size, "no such column '%s'",
+                     select->order_column);
+            return 0;
+        }
+    }
+
+    // Collect the matching rows, so they can be sorted and cut to the
+    // limit before printing. Pointers, not copies: the rows stay put.
+    const Row **rows = malloc(table->row_count * sizeof(*rows));
+
+    // malloc(0) may return NULL, which isn't a failure.
+    if (!rows && table->row_count > 0) {
+        snprintf(error, error_size, "out of memory");
+        return 0;
+    }
+
+    const Filter *f = select->has_where ? &filter : NULL;
+    size_t count = 0;
+
+    for (size_t r = 0; r < table->row_count; r++) {
+        if (row_matches(&table->rows[r], f)) {
+            rows[count++] = &table->rows[r];
+        }
+    }
+
+    // Skipped for under two rows; rows may be NULL, which qsort doesn't
+    // allow even with nothing to sort.
+    if (select->has_order && count > 1) {
+        sort_by.column = (size_t)order_column;
+        sort_by.descending = select->descending;
+        qsort(rows, count, sizeof(*rows), compare_rows);
+    }
+
+    if (select->has_limit && (unsigned long long)select->limit < count) {
+        count = (size_t)select->limit;
+    }
+
+    print_rows(table, columns, column_count, rows, count);
+    free(rows);
     return 1;
 }
 
