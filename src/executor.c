@@ -1,5 +1,6 @@
 #include "executor.h"
 
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -215,19 +216,20 @@ static void print_value(const Value *value, int width) {
     }
 }
 
-// Prints the chosen columns of rows, in order, e.g.
+// Prints the chosen columns of rows, in order, under the headings in
+// names (one per chosen column), e.g.
 //
 //   name  | age
 //   ------+----
 //   Alice |  25
 //   (1 row)
-static void print_rows(const Table *table, const size_t *columns,
+static void print_rows(const char *const *names, const size_t *columns,
                        int column_count, const Row *const *rows,
                        size_t row_count) {
     int widths[MAX_COLUMNS];
 
     for (int i = 0; i < column_count; i++) {
-        widths[i] = (int)strlen(table->columns[columns[i]].name);
+        widths[i] = (int)strlen(names[i]);
 
         for (size_t r = 0; r < row_count; r++) {
             int width = value_width(&rows[r]->values[columns[i]]);
@@ -238,8 +240,7 @@ static void print_rows(const Table *table, const size_t *columns,
     }
 
     for (int i = 0; i < column_count; i++) {
-        printf("%s%-*s", i > 0 ? " | " : "",
-               widths[i], table->columns[columns[i]].name);
+        printf("%s%-*s", i > 0 ? " | " : "", widths[i], names[i]);
     }
     putchar('\n');
 
@@ -288,6 +289,121 @@ static int compare_rows(const void *a, const void *b) {
     return c;
 }
 
+static const char *aggregate_name(AggregateFunc func) {
+    switch (func) {
+        case AGG_COUNT: return "COUNT";
+        case AGG_SUM:   return "SUM";
+        case AGG_MIN:   return "MIN";
+        case AGG_MAX:   return "MAX";
+    }
+    return "UNKNOWN";
+}
+
+// Sets *out to agg over rows, reading the table column at index column
+// (unused for COUNT). Text in *out points into a row, so it's only for
+// printing straight away.
+static int compute_aggregate(const Aggregate *agg, size_t column,
+                             const Row *const *rows, size_t count,
+                             Value *out, char *error, size_t error_size) {
+    if (agg->func == AGG_COUNT) {
+        out->type = TYPE_INT;
+        out->as.integer = (long long)count;
+        return 1;
+    }
+
+    // SQL gives NULL for SUM, MIN or MAX of no rows. Until NULL exists,
+    // an empty string stands in, so the cell prints empty.
+    if (count == 0) {
+        out->type = TYPE_TEXT;
+        out->as.text = "";  // Only printed, never written to.
+        return 1;
+    }
+
+    *out = rows[0]->values[column];
+
+    for (size_t r = 1; r < count; r++) {
+        const Value *value = &rows[r]->values[column];
+
+        switch (agg->func) {
+            case AGG_SUM: {
+                long long x = value->as.integer;
+                long long sum = out->as.integer;
+
+                // Check before adding: in C, overflowing a signed
+                // integer is undefined behaviour, not a wrap-around.
+                if ((x > 0 && sum > LLONG_MAX - x) ||
+                    (x < 0 && sum < LLONG_MIN - x)) {
+                    snprintf(error, error_size, "SUM(%s) is out of range",
+                             agg->column);
+                    return 0;
+                }
+                out->as.integer = sum + x;
+                break;
+            }
+            case AGG_MIN:
+                if (compare_values(value, out) < 0) {
+                    *out = *value;
+                }
+                break;
+            case AGG_MAX:
+                if (compare_values(value, out) > 0) {
+                    *out = *value;
+                }
+                break;
+            case AGG_COUNT:
+                break;  // Handled above.
+        }
+    }
+
+    return 1;
+}
+
+// Prints select's aggregates over rows as a single result row, e.g.
+//
+//   COUNT(*) | MAX(age)
+//   ---------+---------
+//          3 |       41
+//   (1 row)
+//
+// columns holds the table column each aggregate reads. With show_row 0
+// (LIMIT 0) the headings print but the row doesn't.
+static int print_aggregates(const SelectStatement *select,
+                            const size_t *columns,
+                            const Row *const *rows, size_t count,
+                            int show_row, char *error, size_t error_size) {
+    int n = select->aggregate_count;
+    // Room for the longest function name, the column name, "(", ")".
+    char headings[MAX_COLUMNS][MAX_TOKEN_LENGTH + 8];
+    const char *names[MAX_COLUMNS];
+    Value values[MAX_COLUMNS];
+    size_t positions[MAX_COLUMNS];  // Where each result is in values.
+
+    // Compute every result before printing, so an error such as SUM
+    // overflowing doesn't leave half a table.
+    for (int i = 0; i < n; i++) {
+        const Aggregate *agg = &select->aggregates[i];
+
+        if (!compute_aggregate(agg, columns[i], rows, count, &values[i],
+                               error, error_size)) {
+            return 0;
+        }
+
+        snprintf(headings[i], sizeof(headings[i]), "%s(%s)",
+                 aggregate_name(agg->func),
+                 agg->func == AGG_COUNT ? "*" : agg->column);
+        names[i] = headings[i];
+        positions[i] = (size_t)i;
+    }
+
+    // The results make one row of their own, so print_rows can lay it
+    // out like any other.
+    Row result = { values, (size_t)n };
+    const Row *result_rows[] = { &result };
+
+    print_rows(names, positions, n, result_rows, show_row ? 1 : 0);
+    return 1;
+}
+
 static int execute_select(Database *db, const Statement *stmt,
                           char *error, size_t error_size) {
     const SelectStatement *select = &stmt->as.select;
@@ -307,6 +423,34 @@ static int execute_select(Database *db, const Statement *stmt,
         column_count = (int)table->column_count;
         for (int i = 0; i < column_count; i++) {
             columns[i] = (size_t)i;
+        }
+    } else if (select->has_aggregates) {
+        // Here columns holds the column each aggregate reads.
+        column_count = select->aggregate_count;
+        for (int i = 0; i < column_count; i++) {
+            const Aggregate *agg = &select->aggregates[i];
+
+            if (agg->func == AGG_COUNT) {
+                columns[i] = 0;  // COUNT(*) reads no column.
+                continue;
+            }
+
+            int index = table_find_column(table, agg->column);
+
+            if (index < 0) {
+                snprintf(error, error_size, "no such column '%s'",
+                         agg->column);
+                return 0;
+            }
+
+            const Column *column = &table->columns[index];
+            if (agg->func == AGG_SUM && column->type != TYPE_INT) {
+                snprintf(error, error_size,
+                         "SUM needs an INT column but '%s' is %s",
+                         column->name, data_type_name(column->type));
+                return 0;
+            }
+            columns[i] = (size_t)index;
         }
     } else {
         column_count = select->column_count;
@@ -360,6 +504,16 @@ static int execute_select(Database *db, const Statement *stmt,
         }
     }
 
+    // Aggregates read every matching row and give one result row, so
+    // ORDER BY has nothing to sort and LIMIT only matters when it's 0.
+    if (select->has_aggregates) {
+        int show_row = !select->has_limit || select->limit > 0;
+        int ok = print_aggregates(select, columns, rows, count, show_row,
+                                  error, error_size);
+        free(rows);
+        return ok;
+    }
+
     // Skipped for under two rows; rows may be NULL, which qsort doesn't
     // allow even with nothing to sort.
     if (select->has_order && count > 1) {
@@ -372,7 +526,13 @@ static int execute_select(Database *db, const Statement *stmt,
         count = (size_t)select->limit;
     }
 
-    print_rows(table, columns, column_count, rows, count);
+    const char *names[MAX_COLUMNS];
+
+    for (int i = 0; i < column_count; i++) {
+        names[i] = table->columns[columns[i]].name;
+    }
+
+    print_rows(names, columns, column_count, rows, count);
     free(rows);
     return 1;
 }

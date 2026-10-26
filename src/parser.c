@@ -231,21 +231,113 @@ static int parse_insert(Parser *p, Statement *out) {
     return 1;
 }
 
-// select_list = STAR | IDENTIFIER { COMMA IDENTIFIER }
+static int is_aggregate_start(const Parser *p) {
+    switch (peek(p)->type) {
+        case TOKEN_COUNT:
+        case TOKEN_SUM:
+        case TOKEN_MIN:
+        case TOKEN_MAX:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+static void error_mixed(Parser *p) {
+    snprintf(p->error, sizeof(p->error),
+             "can't mix columns and aggregates (there's no GROUP BY)");
+}
+
+// aggregate = COUNT LPAREN STAR RPAREN
+//           | ( SUM | MIN | MAX ) LPAREN IDENTIFIER RPAREN
+static int parse_aggregate(Parser *p, Aggregate *out) {
+    switch (peek(p)->type) {
+        case TOKEN_COUNT: out->func = AGG_COUNT; break;
+        case TOKEN_SUM:   out->func = AGG_SUM; break;
+        case TOKEN_MIN:   out->func = AGG_MIN; break;
+        case TOKEN_MAX:   out->func = AGG_MAX; break;
+
+        default:
+            // A column name here is valid on its own, so name the
+            // real problem rather than what could have come instead.
+            if (peek(p)->type == TOKEN_IDENTIFIER) {
+                error_mixed(p);
+            } else {
+                error_expected(p, "COUNT, SUM, MIN or MAX");
+            }
+            return 0;
+    }
+    p->pos++;
+
+    if (!expect(p, TOKEN_LPAREN, "'('")) {
+        return 0;
+    }
+
+    if (out->func == AGG_COUNT) {
+        // Without NULL, COUNT(column) would always equal COUNT(*).
+        if (!expect(p, TOKEN_STAR, "'*' (only COUNT(*) is supported)")) {
+            return 0;
+        }
+        out->column[0] = '\0';
+    } else {
+        const Token *column = expect(p, TOKEN_IDENTIFIER, "column name");
+        if (!column) {
+            return 0;
+        }
+        snprintf(out->column, sizeof(out->column), "%s", column->text);
+    }
+
+    return expect(p, TOKEN_RPAREN, "')'") != NULL;
+}
+
+// aggregate { COMMA aggregate }
+static int parse_aggregate_list(Parser *p, SelectStatement *out) {
+    do {
+        if (out->aggregate_count == MAX_COLUMNS) {
+            snprintf(p->error, sizeof(p->error),
+                     "too many aggregates (max %d)", MAX_COLUMNS);
+            return 0;
+        }
+
+        if (!parse_aggregate(p, &out->aggregates[out->aggregate_count])) {
+            return 0;
+        }
+
+        out->aggregate_count++;
+    } while (match(p, TOKEN_COMMA));
+
+    return 1;
+}
+
+// select_list = STAR
+//             | aggregate { COMMA aggregate }
+//             | IDENTIFIER { COMMA IDENTIFIER }
 static int parse_select_list(Parser *p, SelectStatement *out) {
     out->column_count = 0;
+    out->aggregate_count = 0;
+    out->select_all = 0;
+    out->has_aggregates = 0;
 
     if (match(p, TOKEN_STAR)) {
         out->select_all = 1;
         return 1;
     }
 
-    out->select_all = 0;
+    // The first item decides which kind of list this is.
+    if (is_aggregate_start(p)) {
+        out->has_aggregates = 1;
+        return parse_aggregate_list(p, out);
+    }
 
     do {
         if (out->column_count == MAX_COLUMNS) {
             snprintf(p->error, sizeof(p->error),
                      "too many columns (max %d)", MAX_COLUMNS);
+            return 0;
+        }
+
+        if (is_aggregate_start(p)) {
+            error_mixed(p);
             return 0;
         }
 

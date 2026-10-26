@@ -37,6 +37,10 @@ const char *token_type_name(TokenType type) {
         case TOKEN_ASC:            return "ASC";
         case TOKEN_DESC:           return "DESC";
         case TOKEN_LIMIT:          return "LIMIT";
+        case TOKEN_COUNT:          return "COUNT";
+        case TOKEN_SUM:            return "SUM";
+        case TOKEN_MIN:            return "MIN";
+        case TOKEN_MAX:            return "MAX";
         case TOKEN_WHERE:          return "WHERE";
         case TOKEN_AND:            return "AND";
         case TOKEN_OR:             return "OR";
@@ -70,6 +74,10 @@ static const Keyword keywords[] = {
     { "ASC",    TOKEN_ASC },
     { "DESC",   TOKEN_DESC },
     { "LIMIT",  TOKEN_LIMIT },
+    { "COUNT",  TOKEN_COUNT },
+    { "SUM",    TOKEN_SUM },
+    { "MIN",    TOKEN_MIN },
+    { "MAX",    TOKEN_MAX },
     { "WHERE",  TOKEN_WHERE },
     { "AND",    TOKEN_AND },
     { "OR",     TOKEN_OR },

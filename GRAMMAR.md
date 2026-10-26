@@ -33,7 +33,11 @@ value         = [ MINUS ] NUMBER | STRING
 
 select_stmt   = SELECT select_list FROM IDENTIFIER [ WHERE condition ]
                 [ ORDER BY IDENTIFIER [ ASC | DESC ] ] [ LIMIT NUMBER ]
-select_list   = STAR | IDENTIFIER { COMMA IDENTIFIER }
+select_list   = STAR
+              | aggregate { COMMA aggregate }
+              | IDENTIFIER { COMMA IDENTIFIER }
+aggregate     = COUNT LPAREN STAR RPAREN
+              | ( SUM | MIN | MAX ) LPAREN IDENTIFIER RPAREN
 
 delete_stmt   = DELETE FROM IDENTIFIER [ WHERE condition ]
 
@@ -68,6 +72,8 @@ SELECT name FROM users WHERE name != 'Bob';   -- `<>` also means not equal
 SELECT * FROM users WHERE age >= 18 AND NOT (name = 'Bob' OR id = 1);
 SELECT name FROM users ORDER BY age DESC LIMIT 3;
 SELECT * FROM users WHERE age > 18 ORDER BY name;  -- ASC is the default
+SELECT COUNT(*) FROM users WHERE age >= 18;
+SELECT COUNT(*), SUM(age), MIN(name), MAX(age) FROM users;
 DELETE FROM users WHERE age < 18;
 DELETE FROM users;                            -- deletes every row
 UPDATE users SET age = 26 WHERE name = 'Alice';
@@ -91,6 +97,8 @@ SELECT * FROM users WHERE age > 1 AND;         -- AND needs a right side
 SELECT * FROM users WHERE (age > 1;            -- unclosed '('
 SELECT * FROM users LIMIT 3 ORDER BY age;      -- ORDER BY comes first
 SELECT * FROM users ORDER BY age, name;        -- one sort column only
+SELECT name, COUNT(*) FROM users;              -- no mixing (no GROUP BY)
+SELECT COUNT(id) FROM users;                   -- only COUNT(*)
 SELECT * FROM users LIMIT -1;                  -- LIMIT can't be negative
 DELETE users WHERE id = 1;                     -- needs FROM
 DELETE * FROM users;                           -- no column list
@@ -111,6 +119,8 @@ depend on what tables exist:
 - `UPDATE` sets columns that exist, each at most once, to values of the
   right types
 - `SELECT` names columns that exist, including the `ORDER BY` column
+  and the columns inside aggregates
+- `SUM` is given an `INT` column
 - the `WHERE` columns exist, in `SELECT`, `UPDATE` and `DELETE`
 - each `WHERE` value has the same type as its column
 
@@ -140,3 +150,17 @@ characters (`'10' < '9'`).
 the first `LIMIT` rows. Without `ORDER BY`, rows come out in the order
 they were inserted. Rows with equal sort values also keep that order.
 The `ORDER BY` column doesn't have to be one of the selected columns.
+
+## Aggregates
+
+`COUNT(*)`, `SUM`, `MIN` and `MAX` read every row that matches the
+`WHERE` and give a single result row. `COUNT(*)` counts those rows.
+`SUM` adds an `INT` column, and fails if the total doesn't fit in one.
+`MIN` and `MAX` take either type, comparing values as described above.
+
+With no matching rows, `COUNT(*)` gives 0 and the others give an empty
+cell (SQL gives `NULL`, which TinySQL doesn't have yet).
+
+There's only ever one result row, so `ORDER BY` changes nothing and
+`LIMIT` matters only when it's 0. `COUNT`, `SUM`, `MIN` and `MAX` are
+keywords, so they can't be used as table or column names.

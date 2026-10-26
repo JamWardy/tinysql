@@ -1,5 +1,34 @@
 # TODO
 
+## Checklist
+
+Done:
+
+- [x] Tokeniser and parser
+- [x] In-memory storage and executor: `CREATE`, `INSERT`, `SELECT`
+- [x] Persistence: binary file, rewritten via a temp file and rename
+- [x] `WHERE` with comparisons, `AND`, `OR`, `NOT` and parentheses
+- [x] Negative numbers
+- [x] `DELETE`, `UPDATE`, `DROP TABLE`
+- [x] `ORDER BY` and `LIMIT`
+- [x] Statements across several lines
+- [x] `COUNT(*)`, `SUM`, `MIN` and `MAX`
+
+Next, roughly in order:
+
+- [ ] DELETE in one pass (see below)
+- [ ] `.tables` and `.schema` commands, to see what's in the database
+- [ ] `NULL`, stored as a row bitmap (see below)
+- [ ] Primary key, then a hash index so `WHERE id = 5` doesn't scan
+      every row
+
+Smaller tidy-ups:
+
+- [ ] GRAMMAR.md: split `primary = LPAREN condition RPAREN | comparison`
+      out of `not_condition`, whose name suggests it's always a NOT
+- [ ] `compile_commands.json` (git-ignored), so clangd jumps from a
+      call to the function body
+
 ## NULL support: store nulls as a bitmap per row
 
 Decided: when we add `NULL`, the file format marks nulls with a **null
@@ -22,6 +51,10 @@ Rejected alternatives:
 - **Flag byte per value**: simplest, but costs a byte per value.
 - **Type code per value** (SQLite): most compact, but most complex, and
   repeats type information our columns already fix.
+
+With `NULL` in place, `SUM`, `MIN` and `MAX` of no rows should give
+`NULL` rather than the empty cell they show now, and `COUNT(column)`
+becomes worth adding.
 
 ## DELETE: remove matching rows in one pass
 

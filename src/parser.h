@@ -82,10 +82,28 @@ typedef struct {
     int root;  // Index of the node for the whole condition.
 } WhereClause;
 
+typedef enum {
+    AGG_COUNT,
+    AGG_SUM,
+    AGG_MIN,
+    AGG_MAX
+} AggregateFunc;
+
+// A function over all the matching rows: `COUNT(*)` or `SUM(price)`.
 typedef struct {
-    int select_all;  // 1 for SELECT *, otherwise use columns.
+    AggregateFunc func;
+    char column[MAX_TOKEN_LENGTH];  // Unused for COUNT(*).
+} Aggregate;
+
+typedef struct {
+    // Exactly one of these lists is used. There's no GROUP BY, so a
+    // SELECT can't mix columns with aggregates.
+    int select_all;      // 1 for SELECT *.
+    int has_aggregates;  // 1 for aggregates, e.g. SELECT COUNT(*), ...
     char columns[MAX_COLUMNS][MAX_TOKEN_LENGTH];
     int column_count;
+    Aggregate aggregates[MAX_COLUMNS];
+    int aggregate_count;
 
     int has_where;   // 1 if there's a WHERE, otherwise where is unused.
     WhereClause where;
