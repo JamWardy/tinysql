@@ -5,14 +5,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-static const char *data_type_name(DataType type) {
-    switch (type) {
-        case TYPE_INT:  return "INT";
-        case TYPE_TEXT: return "TEXT";
-    }
-    return "UNKNOWN";
-}
-
 static int execute_create(Database *db, const Statement *stmt,
                           char *error, size_t error_size) {
     const CreateStatement *create = &stmt->as.create;

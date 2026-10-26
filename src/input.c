@@ -25,16 +25,32 @@ static int skip_line(void) {
     return last;
 }
 
-static int is_exit(const char *line) {
-    // The last line of a file may have no newline.
-    return strcmp(line, ".exit\n") == 0 || strcmp(line, ".exit") == 0;
-}
-
-static int is_blank(const char *s) {
+static const char *skip_spaces(const char *s) {
     while (isspace((unsigned char)*s)) {
         s++;
     }
-    return *s == '\0';
+    return s;
+}
+
+static int is_command(const char *line) {
+    return *skip_spaces(line) == '.';
+}
+
+// Copies the command in line to command (size bytes), leaving out the
+// spaces around it and the newline (the last line of a file may have
+// none).
+static void copy_command(char *command, size_t size, const char *line) {
+    line = skip_spaces(line);
+    size_t length = strlen(line);
+
+    while (length > 0 && isspace((unsigned char)line[length - 1])) {
+        length--;
+    }
+    snprintf(command, size, "%.*s", (int)length, line);
+}
+
+static int is_blank(const char *s) {
+    return *skip_spaces(s) == '\0';
 }
 
 // Returns 1 if line's last non-space character is ';', which ends the
@@ -107,8 +123,9 @@ ReadResult read_statement(char *statement, size_t size) {
 
         // Only the start of a statement can be a command or blank.
         if (result == LINE_OK && !in_statement) {
-            if (is_exit(line)) {
-                return READ_EXIT;
+            if (is_command(line)) {
+                copy_command(statement, size, line);
+                return READ_COMMAND;
             }
             if (is_blank(line)) {
                 continue;

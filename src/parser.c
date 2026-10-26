@@ -76,6 +76,14 @@ static Literal literal_text(const char *text) {
     return lit;
 }
 
+const char *data_type_name(DataType type) {
+    switch (type) {
+        case TYPE_INT:  return "INT";
+        case TYPE_TEXT: return "TEXT";
+    }
+    return "UNKNOWN";
+}
+
 long long literal_as_int(const Literal *lit) {
     assert(lit->type == TYPE_INT);
     return lit->as.integer;

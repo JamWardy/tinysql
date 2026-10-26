@@ -13,11 +13,11 @@ Done:
 - [x] `ORDER BY` and `LIMIT`
 - [x] Statements across several lines
 - [x] `COUNT(*)`, `SUM`, `MIN` and `MAX`
+- [x] `.tables` and `.schema` commands
 
 Next, roughly in order:
 
 - [ ] DELETE in one pass (see below)
-- [ ] `.tables` and `.schema` commands, to see what's in the database
 - [ ] `NULL`, stored as a row bitmap (see below)
 - [ ] Primary key, then a hash index so `WHERE id = 5` doesn't scan
       every row

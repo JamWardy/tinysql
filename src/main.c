@@ -1,5 +1,6 @@
 #include <stdio.h>
 
+#include "commands.h"
 #include "executor.h"
 #include "input.h"
 #include "parser.h"
@@ -62,13 +63,17 @@ int main(int argc, char **argv) {
     } else {
         puts("In-memory database; pass a file name to keep your data.");
     }
-    puts("End each statement with ';'. Type .exit to quit.");
+    puts("End each statement with ';'. Type .tables or .schema to see "
+         "what's here, .exit to quit.");
 
     while (1) {
         ReadResult result = read_statement(statement, sizeof(statement));
 
-        if (result == READ_EXIT || result == READ_END) {
+        if (result == READ_END) {
             break;
+        }
+        if (result == READ_COMMAND && !run_command(&db, statement)) {
+            break;  // .exit
         }
         if (result == READ_STATEMENT) {
             run_statement(&db, path, statement);

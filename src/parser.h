@@ -158,6 +158,9 @@ typedef struct {
     } as;
 } Statement;
 
+// The type as written in SQL: "INT" or "TEXT".
+const char *data_type_name(DataType type);
+
 // Read a Literal's value. The type must match: reading the wrong member
 // is a programmer error and stops the program.
 long long literal_as_int(const Literal *lit);

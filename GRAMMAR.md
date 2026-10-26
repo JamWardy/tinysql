@@ -164,3 +164,16 @@ cell (SQL gives `NULL`, which TinySQL doesn't have yet).
 There's only ever one result row, so `ORDER BY` changes nothing and
 `LIMIT` matters only when it's 0. `COUNT`, `SUM`, `MIN` and `MAX` are
 keywords, so they can't be used as table or column names.
+
+## Commands
+
+Lines starting with `.` are commands for the program, not SQL. They
+skip the tokeniser and parser, need no `;`, and are recognised only at
+the start of a statement.
+
+| Command          | Does                                               |
+|------------------|----------------------------------------------------|
+| `.tables`        | lists the tables, in the order they were created   |
+| `.schema`        | prints the `CREATE TABLE` statement for each table |
+| `.schema users`  | prints it for one table                            |
+| `.exit`          | quits                                              |
