@@ -85,7 +85,7 @@ INSERT INTO users VALUES (--1);    -- only one '-'
 INSERT INTO users VALUES (-'a');   -- '-' only before a number
 SELECT * FROM users                -- missing semicolon
 SELECT *, name FROM users;         -- '*' can't be mixed with columns
-SELECT * FROM users; SELECT 1;     -- one statement per line
+SELECT * FROM users; SELECT 1;     -- one statement at a time
 SELECT * FROM users WHERE 18 < age;   -- column must come first
 SELECT * FROM users WHERE age > 1 AND;         -- AND needs a right side
 SELECT * FROM users WHERE (age > 1;            -- unclosed '('

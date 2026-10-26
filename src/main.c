@@ -1,28 +1,41 @@
 #include <stdio.h>
-#include <string.h>
 
 #include "executor.h"
+#include "input.h"
 #include "parser.h"
 #include "persist.h"
 #include "table.h"
 #include "tokeniser.h"
 
-#define MAX_INPUT 1024
 #define MAX_ERROR 256
 
-// Reads and discards the rest of the current input line.
-static void skip_line(void) {
-    int c;
+// Tokenises, parses and executes one statement, printing any error, and
+// saves the database to path (if any) after a successful change.
+static void run_statement(Database *db, const char *path, const char *sql) {
+    static TokenList tokens;  // Large, so keep these off the stack.
+    static Statement stmt;
+    char error[MAX_ERROR];
 
-    while ((c = getchar()) != '\n' && c != EOF) {
+    if (!tokenise(sql, &tokens, error, sizeof(error)) ||
+        !parse(&tokens, &stmt, error, sizeof(error)) ||
+        !execute(db, &stmt, error, sizeof(error))) {
+        printf("Error: %s\n", error);
+        return;
+    }
+
+    // Rewrite the file after every change, so stopping the program
+    // at any point loses nothing that succeeded.
+    if (path && stmt.type != STMT_SELECT &&
+        !database_save(db, path, error, sizeof(error))) {
+        printf("Error: change not saved: %s\n"
+               "It's kept in memory and will be saved with the next "
+               "change that saves successfully.\n", error);
     }
 }
 
 int main(int argc, char **argv) {
-    char input[MAX_INPUT];
+    char statement[MAX_STATEMENT];
     char error[MAX_ERROR];
-    static TokenList tokens;  // Large, so keep these off the stack.
-    static Statement stmt;
     Database db;
     const char *path = NULL;  // NULL: keep the database in memory only.
 
@@ -49,58 +62,16 @@ int main(int argc, char **argv) {
     } else {
         puts("In-memory database; pass a file name to keep your data.");
     }
-    puts("Type .exit to quit.");
+    puts("End each statement with ';'. Type .exit to quit.");
 
     while (1) {
-        printf("sql> ");
-        fflush(stdout);
+        ReadResult result = read_statement(statement, sizeof(statement));
 
-        if (fgets(input, sizeof(input), stdin) == NULL) {
+        if (result == READ_EXIT || result == READ_END) {
             break;
         }
-
-        // fgets stops when the buffer is full; without a newline the rest
-        // of the line is still waiting and would be read as the next line.
-        size_t length = strlen(input);
-        if (length == sizeof(input) - 1 && input[length - 1] != '\n') {
-            skip_line();
-            printf("Error: line too long (max %d characters)\n",
-                   MAX_INPUT - 2);
-            continue;
-        }
-
-        if (strcmp(input, ".exit\n") == 0 ||
-            strcmp(input, ".exit") == 0) {
-            break;
-        }
-
-        if (!tokenise(input, &tokens, error, sizeof(error))) {
-            printf("Error: %s\n", error);
-            continue;
-        }
-
-        // Blank line: nothing to do.
-        if (tokens.tokens[0].type == TOKEN_EOF) {
-            continue;
-        }
-
-        if (!parse(&tokens, &stmt, error, sizeof(error))) {
-            printf("Error: %s\n", error);
-            continue;
-        }
-
-        if (!execute(&db, &stmt, error, sizeof(error))) {
-            printf("Error: %s\n", error);
-            continue;
-        }
-
-        // Rewrite the file after every change, so stopping the program
-        // at any point loses nothing that succeeded.
-        if (path && stmt.type != STMT_SELECT &&
-            !database_save(&db, path, error, sizeof(error))) {
-            printf("Error: change not saved: %s\n"
-                   "It's kept in memory and will be saved with the next "
-                   "change that saves successfully.\n", error);
+        if (result == READ_STATEMENT) {
+            run_statement(&db, path, statement);
         }
     }
 
