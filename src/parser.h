@@ -115,7 +115,8 @@ typedef enum {
     STMT_INSERT,
     STMT_SELECT,
     STMT_DELETE,
-    STMT_UPDATE
+    STMT_UPDATE,
+    STMT_DROP        // Needs only table_name.
 } StatementType;
 
 // What the parser produces and the executor consumes.

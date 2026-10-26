@@ -9,10 +9,11 @@
 // and array reachable from it. Functions that take strings or Values copy
 // them, so callers (e.g. the parser's reusable Statement) keep their own.
 //
-// Arrays grow with realloc, which may move them. A Table * is valid only
-// until the next database_create_table, and a Row * only until the next
-// table_append_row or table_delete_row on its table; look them up again
-// after any of these.
+// Arrays grow with realloc, which may move them, and removing an element
+// moves the ones after it. A Table * is valid only until the next
+// database_create_table or database_drop_table, and a Row * only until
+// the next table_append_row or table_delete_row on its table; look them
+// up again after any of these.
 
 typedef struct {
     char *name;
@@ -63,6 +64,10 @@ Table *database_find_table(const Database *db, const char *name);
 // Returns the new table, or NULL if memory ran out (db is unchanged).
 Table *database_create_table(Database *db, const char *name,
                              const ColumnDef *columns, size_t column_count);
+
+// Frees table, which must be one of db's, and moves every later table
+// down one place.
+void database_drop_table(Database *db, Table *table);
 
 // Returns the index of the column with exactly this name, or -1.
 int table_find_column(const Table *table, const char *name);

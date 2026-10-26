@@ -431,6 +431,19 @@ static int execute_update(Database *db, const Statement *stmt,
     return 1;
 }
 
+static int execute_drop(Database *db, const Statement *stmt,
+                        char *error, size_t error_size) {
+    Table *table = database_find_table(db, stmt->table_name);
+
+    if (!table) {
+        snprintf(error, error_size, "no such table '%s'", stmt->table_name);
+        return 0;
+    }
+
+    database_drop_table(db, table);
+    return 1;
+}
+
 int execute(Database *db, const Statement *stmt,
             char *error, size_t error_size) {
     switch (stmt->type) {
@@ -444,6 +457,8 @@ int execute(Database *db, const Statement *stmt,
             return execute_delete(db, stmt, error, error_size);
         case STMT_UPDATE:
             return execute_update(db, stmt, error, error_size);
+        case STMT_DROP:
+            return execute_drop(db, stmt, error, error_size);
     }
 
     snprintf(error, error_size, "unknown statement type");

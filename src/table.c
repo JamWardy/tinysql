@@ -113,6 +113,17 @@ Table *database_create_table(Database *db, const char *name,
     return table;
 }
 
+void database_drop_table(Database *db, Table *table) {
+    // Pointer subtraction gives the table's index in the array.
+    assert(table >= db->tables && table < db->tables + db->count);
+    size_t index = (size_t)(table - db->tables);
+
+    table_free(table);
+    memmove(table, table + 1,
+            (db->count - index - 1) * sizeof(*table));
+    db->count--;
+}
+
 int table_find_column(const Table *table, const char *name) {
     for (size_t i = 0; i < table->column_count; i++) {
         if (strcmp(table->columns[i].name, name) == 0) {

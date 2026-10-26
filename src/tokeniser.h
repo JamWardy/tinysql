@@ -32,6 +32,7 @@ typedef enum {
     TOKEN_DELETE,
     TOKEN_UPDATE,
     TOKEN_SET,
+    TOKEN_DROP,
     TOKEN_WHERE,
     TOKEN_AND,
     TOKEN_OR,

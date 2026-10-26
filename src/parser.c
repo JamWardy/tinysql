@@ -541,8 +541,25 @@ static int parse_update(Parser *p, Statement *out) {
     return 1;
 }
 
+// drop_stmt = DROP TABLE IDENTIFIER
+static int parse_drop(Parser *p, Statement *out) {
+    if (!expect(p, TOKEN_DROP, "DROP") ||
+        !expect(p, TOKEN_TABLE, "TABLE")) {
+        return 0;
+    }
+
+    const Token *name = expect(p, TOKEN_IDENTIFIER, "table name");
+    if (!name) {
+        return 0;
+    }
+
+    out->type = STMT_DROP;
+    snprintf(out->table_name, sizeof(out->table_name), "%s", name->text);
+    return 1;
+}
+
 // statement = ( create_stmt | insert_stmt | select_stmt | delete_stmt
-//             | update_stmt ) SEMICOLON EOF
+//             | update_stmt | drop_stmt ) SEMICOLON EOF
 int parse(const TokenList *tokens, Statement *out,
           char *error, size_t error_size) {
     Parser p = { tokens, 0, "" };
@@ -569,8 +586,13 @@ int parse(const TokenList *tokens, Statement *out,
             ok = parse_update(&p, out);
             break;
 
+        case TOKEN_DROP:
+            ok = parse_drop(&p, out);
+            break;
+
         default:
-            error_expected(&p, "CREATE, INSERT, SELECT, UPDATE or DELETE");
+            error_expected(&p,
+                           "CREATE, INSERT, SELECT, UPDATE, DELETE or DROP");
             ok = 0;
             break;
     }

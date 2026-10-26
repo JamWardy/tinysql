@@ -18,7 +18,7 @@ token types produced by the tokeniser in `src/tokeniser.h`.
 
 ```
 statement     = ( create_stmt | insert_stmt | select_stmt | delete_stmt
-                | update_stmt ) SEMICOLON EOF
+                | update_stmt | drop_stmt ) SEMICOLON EOF
 
 create_stmt   = CREATE TABLE IDENTIFIER
                 LPAREN column_def { COMMA column_def } RPAREN
@@ -39,6 +39,8 @@ delete_stmt   = DELETE FROM IDENTIFIER [ WHERE condition ]
 update_stmt   = UPDATE IDENTIFIER
                 SET assignment { COMMA assignment } [ WHERE condition ]
 assignment    = IDENTIFIER EQUAL value
+
+drop_stmt     = DROP TABLE IDENTIFIER
 
 condition     = and_condition { OR and_condition }
 and_condition = not_condition { AND not_condition }
@@ -67,6 +69,7 @@ DELETE FROM users WHERE age < 18;
 DELETE FROM users;                            -- deletes every row
 UPDATE users SET age = 26 WHERE name = 'Alice';
 UPDATE users SET name = 'Anon', age = 0;      -- updates every row
+DROP TABLE users;
 ```
 
 Rejected:
@@ -87,6 +90,8 @@ DELETE users WHERE id = 1;                     -- needs FROM
 DELETE * FROM users;                           -- no column list
 UPDATE users age = 26;                         -- needs SET
 UPDATE users SET age = age + 1;                -- values only, no expressions
+DROP users;                                    -- needs TABLE
+DROP TABLE a, b;                               -- one table at a time
 ```
 
 ## Not checked by the grammar
