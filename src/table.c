@@ -166,6 +166,29 @@ int table_append_row(Table *table, const Value *values) {
     return 1;
 }
 
+int table_set_value(Table *table, size_t row, size_t column,
+                    const Value *value) {
+    assert(row < table->row_count && column < table->column_count);
+    // A mismatch means the executor skipped validation.
+    assert(value->type == table->columns[column].type);
+
+    Value *slot = &table->rows[row].values[column];
+
+    if (value->type == TYPE_TEXT) {
+        // Copy before freeing, so a failure leaves the old text in place.
+        char *text = copy_string(value->as.text);
+        if (!text) {
+            return 0;
+        }
+        free(slot->as.text);
+        slot->as.text = text;
+    } else {
+        slot->as.integer = value->as.integer;
+    }
+
+    return 1;
+}
+
 void table_delete_row(Table *table, size_t index) {
     assert(index < table->row_count);
 

@@ -473,8 +473,76 @@ static int parse_delete(Parser *p, Statement *out) {
     return 1;
 }
 
-// statement = ( create_stmt | insert_stmt | select_stmt | delete_stmt )
-//             SEMICOLON EOF
+// assignment = IDENTIFIER EQUAL value
+static int parse_assignment(Parser *p, Assignment *out) {
+    const Token *column = expect(p, TOKEN_IDENTIFIER, "column name");
+    if (!column) {
+        return 0;
+    }
+
+    if (!expect(p, TOKEN_EQUAL, "'='") ||
+        !parse_value(p, &out->value)) {
+        return 0;
+    }
+
+    snprintf(out->column, sizeof(out->column), "%s", column->text);
+    return 1;
+}
+
+// update_stmt = UPDATE IDENTIFIER
+//               SET assignment { COMMA assignment } [ WHERE condition ]
+static int parse_update(Parser *p, Statement *out) {
+    UpdateStatement *update = &out->as.update;
+
+    if (!expect(p, TOKEN_UPDATE, "UPDATE")) {
+        return 0;
+    }
+
+    const Token *name = expect(p, TOKEN_IDENTIFIER, "table name");
+    if (!name) {
+        return 0;
+    }
+
+    if (!expect(p, TOKEN_SET, "SET")) {
+        return 0;
+    }
+
+    update->assignment_count = 0;
+
+    do {
+        if (update->assignment_count == MAX_COLUMNS) {
+            snprintf(p->error, sizeof(p->error),
+                     "too many assignments (max %d)", MAX_COLUMNS);
+            return 0;
+        }
+
+        if (!parse_assignment(
+                p, &update->assignments[update->assignment_count])) {
+            return 0;
+        }
+
+        update->assignment_count++;
+    } while (match(p, TOKEN_COMMA));
+
+    // Name every option here, rather than the bare "expected ';'" from
+    // parse.
+    TokenType next = peek(p)->type;
+    if (next != TOKEN_WHERE && next != TOKEN_SEMICOLON) {
+        error_expected(p, "',', WHERE or ';'");
+        return 0;
+    }
+
+    if (!parse_where(p, &update->has_where, &update->where)) {
+        return 0;
+    }
+
+    out->type = STMT_UPDATE;
+    snprintf(out->table_name, sizeof(out->table_name), "%s", name->text);
+    return 1;
+}
+
+// statement = ( create_stmt | insert_stmt | select_stmt | delete_stmt
+//             | update_stmt ) SEMICOLON EOF
 int parse(const TokenList *tokens, Statement *out,
           char *error, size_t error_size) {
     Parser p = { tokens, 0, "" };
@@ -497,8 +565,12 @@ int parse(const TokenList *tokens, Statement *out,
             ok = parse_delete(&p, out);
             break;
 
+        case TOKEN_UPDATE:
+            ok = parse_update(&p, out);
+            break;
+
         default:
-            error_expected(&p, "CREATE, INSERT, SELECT or DELETE");
+            error_expected(&p, "CREATE, INSERT, SELECT, UPDATE or DELETE");
             ok = 0;
             break;
     }

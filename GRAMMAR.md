@@ -17,8 +17,8 @@ token types produced by the tokeniser in `src/tokeniser.h`.
 ## Rules
 
 ```
-statement     = ( create_stmt | insert_stmt | select_stmt | delete_stmt )
-                SEMICOLON EOF
+statement     = ( create_stmt | insert_stmt | select_stmt | delete_stmt
+                | update_stmt ) SEMICOLON EOF
 
 create_stmt   = CREATE TABLE IDENTIFIER
                 LPAREN column_def { COMMA column_def } RPAREN
@@ -35,6 +35,10 @@ select_stmt   = SELECT select_list FROM IDENTIFIER [ WHERE condition ]
 select_list   = STAR | IDENTIFIER { COMMA IDENTIFIER }
 
 delete_stmt   = DELETE FROM IDENTIFIER [ WHERE condition ]
+
+update_stmt   = UPDATE IDENTIFIER
+                SET assignment { COMMA assignment } [ WHERE condition ]
+assignment    = IDENTIFIER EQUAL value
 
 condition     = and_condition { OR and_condition }
 and_condition = not_condition { AND not_condition }
@@ -61,6 +65,8 @@ SELECT name FROM users WHERE name != 'Bob';   -- `<>` also means not equal
 SELECT * FROM users WHERE age >= 18 AND NOT (name = 'Bob' OR id = 1);
 DELETE FROM users WHERE age < 18;
 DELETE FROM users;                            -- deletes every row
+UPDATE users SET age = 26 WHERE name = 'Alice';
+UPDATE users SET name = 'Anon', age = 0;      -- updates every row
 ```
 
 Rejected:
@@ -79,6 +85,8 @@ SELECT * FROM users WHERE age > 1 AND;         -- AND needs a right side
 SELECT * FROM users WHERE (age > 1;            -- unclosed '('
 DELETE users WHERE id = 1;                     -- needs FROM
 DELETE * FROM users;                           -- no column list
+UPDATE users age = 26;                         -- needs SET
+UPDATE users SET age = age + 1;                -- values only, no expressions
 ```
 
 ## Not checked by the grammar
@@ -89,8 +97,10 @@ depend on what tables exist:
 - the table exists (or, for `CREATE`, doesn't already exist)
 - column names are unique within a `CREATE TABLE`
 - `INSERT` has the right number of values, of the right types
+- `UPDATE` sets columns that exist, each at most once, to values of the
+  right types
 - `SELECT` names columns that exist
-- the `WHERE` columns exist, in `SELECT` and `DELETE`
+- the `WHERE` columns exist, in `SELECT`, `UPDATE` and `DELETE`
 - each `WHERE` value has the same type as its column
 
 ## Combining conditions

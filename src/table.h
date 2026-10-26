@@ -72,6 +72,12 @@ int table_find_column(const Table *table, const char *name);
 // Returns 1, or 0 if memory ran out (table is unchanged).
 int table_append_row(Table *table, const Value *values);
 
+// Replaces one value of a row with a copy of value, whose type must
+// match the column; the caller validates first.
+// Returns 1, or 0 if memory ran out (the old value is kept).
+int table_set_value(Table *table, size_t row, size_t column,
+                    const Value *value);
+
 // Frees the row at index and moves every later row down one place, so
 // the rest keep their order. index must be less than row_count.
 void table_delete_row(Table *table, size_t index);

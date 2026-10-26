@@ -41,6 +41,22 @@ static int execute_create(Database *db, const Statement *stmt,
     return 1;
 }
 
+// The Value to pass to the table for lit. Its text points into lit, so
+// it's only for functions that copy it, and lit must outlive it.
+static Value literal_to_value(const Literal *lit) {
+    Value value;
+
+    value.type = lit->type;
+    if (lit->type == TYPE_INT) {
+        value.as.integer = literal_as_int(lit);
+    } else {
+        // Value.as.text isn't const because the table frees its own
+        // copies; the table functions only read this one and copy it.
+        value.as.text = (char *)literal_as_text(lit);
+    }
+    return value;
+}
+
 static int execute_insert(Database *db, const Statement *stmt,
                           char *error, size_t error_size) {
     const InsertStatement *insert = &stmt->as.insert;
@@ -72,14 +88,7 @@ static int execute_insert(Database *db, const Statement *stmt,
             return 0;
         }
 
-        values[i].type = lit->type;
-        if (lit->type == TYPE_INT) {
-            values[i].as.integer = literal_as_int(lit);
-        } else {
-            // Value.as.text isn't const because the table frees its own
-            // copies; table_append_row only reads this one and copies it.
-            values[i].as.text = (char *)literal_as_text(lit);
-        }
+        values[i] = literal_to_value(lit);
     }
 
     if (!table_append_row(table, values)) {
@@ -344,6 +353,84 @@ static int execute_delete(Database *db, const Statement *stmt,
     return 1;
 }
 
+static int execute_update(Database *db, const Statement *stmt,
+                          char *error, size_t error_size) {
+    const UpdateStatement *update = &stmt->as.update;
+    Table *table = database_find_table(db, stmt->table_name);
+
+    if (!table) {
+        snprintf(error, error_size, "no such table '%s'", stmt->table_name);
+        return 0;
+    }
+
+    // Check every assignment and the WHERE before changing any row.
+    size_t columns[MAX_COLUMNS];
+    Value values[MAX_COLUMNS];
+
+    for (int i = 0; i < update->assignment_count; i++) {
+        const Assignment *assign = &update->assignments[i];
+        int index = table_find_column(table, assign->column);
+
+        if (index < 0) {
+            snprintf(error, error_size, "no such column '%s'",
+                     assign->column);
+            return 0;
+        }
+
+        const Column *column = &table->columns[index];
+        if (assign->value.type != column->type) {
+            snprintf(error, error_size,
+                     "column '%s' is %s but the value is %s",
+                     column->name, data_type_name(column->type),
+                     data_type_name(assign->value.type));
+            return 0;
+        }
+
+        for (int j = 0; j < i; j++) {
+            if (columns[j] == (size_t)index) {
+                snprintf(error, error_size, "column '%s' is set twice",
+                         column->name);
+                return 0;
+            }
+        }
+
+        columns[i] = (size_t)index;
+        values[i] = literal_to_value(&assign->value);
+    }
+
+    Filter filter;
+
+    if (update->has_where &&
+        !resolve_filter(table, &update->where, &filter, error, error_size)) {
+        return 0;
+    }
+
+    const Filter *f = update->has_where ? &filter : NULL;
+    size_t updated = 0;
+
+    for (size_t r = 0; r < table->row_count; r++) {
+        // Each row is tested before any of its values change, and a
+        // change to one row can't affect the test on another.
+        if (!row_matches(&table->rows[r], f)) {
+            continue;
+        }
+
+        for (int i = 0; i < update->assignment_count; i++) {
+            // Only text needs memory. Running out partway leaves the
+            // changes made so far in place; there's no undo.
+            if (!table_set_value(table, r, columns[i], &values[i])) {
+                snprintf(error, error_size,
+                         "out of memory after updating %zu rows", updated);
+                return 0;
+            }
+        }
+        updated++;
+    }
+
+    printf("(%zu %s updated)\n", updated, updated == 1 ? "row" : "rows");
+    return 1;
+}
+
 int execute(Database *db, const Statement *stmt,
             char *error, size_t error_size) {
     switch (stmt->type) {
@@ -355,6 +442,8 @@ int execute(Database *db, const Statement *stmt,
             return execute_select(db, stmt, error, error_size);
         case STMT_DELETE:
             return execute_delete(db, stmt, error, error_size);
+        case STMT_UPDATE:
+            return execute_update(db, stmt, error, error_size);
     }
 
     snprintf(error, error_size, "unknown statement type");

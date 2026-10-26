@@ -96,11 +96,26 @@ typedef struct {
     WhereClause where;
 } DeleteStatement;
 
+// A column given a new value in UPDATE: `age = 26`.
+typedef struct {
+    char column[MAX_TOKEN_LENGTH];
+    Literal value;
+} Assignment;
+
+typedef struct {
+    Assignment assignments[MAX_COLUMNS];
+    int assignment_count;
+
+    int has_where;   // 0 updates every row.
+    WhereClause where;
+} UpdateStatement;
+
 typedef enum {
     STMT_CREATE,
     STMT_INSERT,
     STMT_SELECT,
-    STMT_DELETE
+    STMT_DELETE,
+    STMT_UPDATE
 } StatementType;
 
 // What the parser produces and the executor consumes.
@@ -112,6 +127,7 @@ typedef struct {
         InsertStatement insert;
         SelectStatement select;
         DeleteStatement delete;
+        UpdateStatement update;
     } as;
 } Statement;
 
