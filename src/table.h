@@ -128,6 +128,10 @@ uint64_t key_hash(const ColumnList *key, const Value *values);
 // in every one of key's columns.
 int key_equal(const ColumnList *key, const Value *a, const Value *b);
 
+// Sets *dest to a copy of src, with its own copy of any text.
+// Returns 1, or 0 if memory ran out (*dest is unchanged).
+int value_copy(Value *dest, const Value *src);
+
 // Frees the text owned by the first count values, which may be NULL or
 // any type. The array itself is the caller's.
 void values_free(Value *values, size_t count);

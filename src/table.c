@@ -15,6 +15,20 @@ static char *copy_string(const char *s) {
     return copy;
 }
 
+int value_copy(Value *dest, const Value *src) {
+    Value copy = *src;
+
+    if (src->type == TYPE_TEXT) {
+        copy.as.text = copy_string(src->as.text);
+        if (!copy.as.text) {
+            return 0;
+        }
+    }
+
+    *dest = copy;
+    return 1;
+}
+
 void values_free(Value *values, size_t count) {
     for (size_t i = 0; i < count; i++) {
         if (values[i].type == TYPE_TEXT) {
@@ -292,18 +306,10 @@ int table_append_row(Table *table, const Value *values) {
         assert(values[i].type == table->columns[i].type ||
                values[i].type == TYPE_NULL);
 
-        copy[i].type = values[i].type;
-
-        if (values[i].type == TYPE_TEXT) {
-            copy[i].as.text = copy_string(values[i].as.text);
-
-            if (!copy[i].as.text) {
-                values_free(copy, i);
-                free(copy);
-                return 0;
-            }
-        } else if (values[i].type == TYPE_INT) {
-            copy[i].as.integer = values[i].as.integer;
+        if (!value_copy(&copy[i], &values[i])) {
+            values_free(copy, i);
+            free(copy);
+            return 0;
         }
     }
 
@@ -327,13 +333,10 @@ int table_set_value(Table *table, size_t row, size_t column,
     assert(value->type == table->columns[column].type ||
            value->type == TYPE_NULL);
 
-    Value copy = *value;
+    Value copy;
 
-    if (value->type == TYPE_TEXT) {
-        copy.as.text = copy_string(value->as.text);
-        if (!copy.as.text) {
-            return 0;
-        }
+    if (!value_copy(&copy, value)) {
+        return 0;
     }
 
     const Value *values = table->rows[row].values;
