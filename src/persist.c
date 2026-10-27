@@ -77,24 +77,42 @@ static void write_table(FILE *file, const Table *table) {
     }
 }
 
+// Returns a new string, path with ".tmp" on the end, or NULL if memory
+// ran out. The caller frees it.
+static char *make_temp_path(const char *path) {
+    size_t length = strlen(path);
+    char *temp_path = malloc(length + sizeof(".tmp"));
+
+    if (temp_path) {
+        memcpy(temp_path, path, length);
+        memcpy(temp_path + length, ".tmp", sizeof(".tmp"));
+    }
+    return temp_path;
+}
+
+// After a failed save: deletes the half-written temp file and frees its
+// path. Call it after writing the error, since the error may use errno
+// or temp_path.
+static void discard_temp(char *temp_path) {
+    remove(temp_path);
+    free(temp_path);
+}
+
 int database_save(const Database *db, const char *path,
                   char *error, size_t error_size) {
     // Write a complete copy beside the real file, then rename it over
     // the real one, which swaps the file in a single step.
-    size_t length = strlen(path);
-    char *temp_path = malloc(length + sizeof(".tmp"));
+    char *temp_path = make_temp_path(path);
 
     if (!temp_path) {
         return fail(error, error_size, "out of memory");
     }
-    memcpy(temp_path, path, length);
-    memcpy(temp_path + length, ".tmp", sizeof(".tmp"));
 
     FILE *file = fopen(temp_path, "wb");
     if (!file) {
         fail(error, error_size, "cannot create '%s': %s",
              temp_path, strerror(errno));
-        free(temp_path);
+        free(temp_path);  // Nothing was created, so nothing to remove.
         return 0;
     }
 
@@ -112,16 +130,14 @@ int database_save(const Database *db, const char *path,
 
     if (failed) {
         fail(error, error_size, "error writing '%s'", temp_path);
-        remove(temp_path);
-        free(temp_path);
+        discard_temp(temp_path);
         return 0;
     }
 
     if (rename(temp_path, path) != 0) {
         fail(error, error_size, "cannot replace '%s': %s",
              path, strerror(errno));
-        remove(temp_path);
-        free(temp_path);
+        discard_temp(temp_path);
         return 0;
     }
 
