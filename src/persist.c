@@ -16,7 +16,7 @@
 //
 //   "TSQL"  u32 version  u32 table_count
 //   per table:   string name  u32 column_count
-//                per column: u8 type  string name
+//                per column: u8 type  u8 flags  string name
 //                u64 row_count
 //                per row:    null bitmap
 //                            per non-null value: INT as u64, TEXT as string
@@ -32,17 +32,24 @@
 // instead stores a type code per value, which is more compact but more
 // complex, and repeats what our column types already fix.
 //
-// Version 1 files are the same but with no bitmap: nothing is NULL.
-// They're still read, and are saved as version 2.
+// A column's flags byte has bit 0 set for NOT NULL; the other bits are 0.
+// A NOT NULL column has no NULLs, so its bitmap bit is never set.
+//
+// Older versions are still read, and are saved as version 3:
+//   version 2 has no flags byte: no column is NOT NULL.
+//   version 1 also has no bitmap: nothing is NULL.
 
 #define MAGIC "TSQL"
 #define MAGIC_LENGTH 4
-#define FORMAT_VERSION 2
+#define FORMAT_VERSION 3
 
 // Type codes in the file. Fixed here rather than taken from DataType,
 // so reordering that enum can't change the meaning of existing files.
 #define FILE_TYPE_INT  1
 #define FILE_TYPE_TEXT 2
+
+// Bits in a column's flags byte.
+#define FILE_FLAG_NOT_NULL 1
 
 // Bytes in a row's null bitmap.
 #define BITMAP_SIZE(column_count) (((column_count) + 7) / 8)
@@ -109,6 +116,7 @@ static void write_table(FILE *file, const Table *table) {
 
         write_uint(file, column->type == TYPE_INT
                              ? FILE_TYPE_INT : FILE_TYPE_TEXT, 1);
+        write_uint(file, column->not_null ? FILE_FLAG_NOT_NULL : 0, 1);
         write_string(file, column->name);
     }
 
@@ -336,6 +344,13 @@ static int read_bitmap(Reader *r, const Table *table, NullBitmap *out) {
                              table->name);
         }
     }
+
+    for (size_t i = 0; i < table->column_count; i++) {
+        if (null_bit_is_set(out, i) && table->columns[i].not_null) {
+            return read_fail(r, "table '%s' has a NULL in NOT NULL column '%s'",
+                             table->name, table->columns[i].name);
+        }
+    }
     return 1;
 }
 
@@ -378,6 +393,37 @@ static int read_row(Reader *r, Table *table) {
     return ok ? 1 : read_fail(r, "out of memory");
 }
 
+// Reads one column of the table named table_name into out. Columns in
+// files before version 3 have no flags byte, so none is NOT NULL.
+static int read_column(Reader *r, const char *table_name, ColumnDef *out) {
+    uint64_t type;
+    uint64_t flags = 0;
+
+    if (!read_uint(r, 1, &type)) {
+        return 0;
+    }
+
+    if (type == FILE_TYPE_INT) {
+        out->type = TYPE_INT;
+    } else if (type == FILE_TYPE_TEXT) {
+        out->type = TYPE_TEXT;
+    } else {
+        return read_fail(r, "table '%s' has an unknown column type %llu",
+                         table_name, (unsigned long long)type);
+    }
+
+    if (r->version >= 3 && !read_uint(r, 1, &flags)) {
+        return 0;
+    }
+    if (flags & ~(uint64_t)FILE_FLAG_NOT_NULL) {
+        return read_fail(r, "table '%s' has unknown column flags %llu",
+                         table_name, (unsigned long long)flags);
+    }
+    out->not_null = (flags & FILE_FLAG_NOT_NULL) != 0;
+
+    return read_name(r, out->name, sizeof(out->name));
+}
+
 static int read_table(Reader *r, Database *db) {
     char name[MAX_TOKEN_LENGTH];
     ColumnDef columns[MAX_COLUMNS];
@@ -400,23 +446,7 @@ static int read_table(Reader *r, Database *db) {
     }
 
     for (size_t i = 0; i < column_count; i++) {
-        uint64_t type;
-
-        if (!read_uint(r, 1, &type)) {
-            return 0;
-        }
-
-        if (type == FILE_TYPE_INT) {
-            columns[i].type = TYPE_INT;
-        } else if (type == FILE_TYPE_TEXT) {
-            columns[i].type = TYPE_TEXT;
-        } else {
-            return read_fail(r,
-                             "table '%s' has an unknown column type %llu",
-                             name, (unsigned long long)type);
-        }
-
-        if (!read_name(r, columns[i].name, sizeof(columns[i].name))) {
+        if (!read_column(r, name, &columns[i])) {
             return 0;
         }
 

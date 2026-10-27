@@ -104,7 +104,7 @@ const char *literal_as_text(const Literal *lit) {
     return lit->as.text;
 }
 
-// column_def = IDENTIFIER column_type
+// column_def = IDENTIFIER column_type [ NOT NULL ]
 // column_type = INT | TEXT
 static int parse_column_def(Parser *p, ColumnDef *out) {
     const Token *name = expect(p, TOKEN_IDENTIFIER, "column name");
@@ -118,6 +118,11 @@ static int parse_column_def(Parser *p, ColumnDef *out) {
         out->type = TYPE_TEXT;
     } else {
         error_expected(p, "column type (INT or TEXT)");
+        return 0;
+    }
+
+    out->not_null = match(p, TOKEN_NOT);
+    if (out->not_null && !expect(p, TOKEN_NULL, "NULL")) {
         return 0;
     }
 

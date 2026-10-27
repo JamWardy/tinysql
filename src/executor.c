@@ -31,6 +31,19 @@ static int check_type(const Column *column, DataType given, const char *what,
     return 1;
 }
 
+// Checks that a value of type given can be stored in column by INSERT
+// or UPDATE: it has the right type, and isn't NULL if the column is NOT
+// NULL. A WHERE uses check_type instead, since IS NULL is fine on any
+// column.
+static int check_value(const Column *column, DataType given,
+                       char *error, size_t error_size) {
+    if (given == TYPE_NULL && column->not_null) {
+        return fail(error, error_size, "column '%s' can't be NULL",
+                    column->name);
+    }
+    return check_type(column, given, "value", error, error_size);
+}
+
 static int execute_create(Database *db, const Statement *stmt,
                           char *error, size_t error_size) {
     const CreateStatement *create = &stmt->as.create;
@@ -94,8 +107,7 @@ static int execute_insert(Database *db, const Statement *stmt,
     for (int i = 0; i < insert->value_count; i++) {
         const Literal *lit = &insert->values[i];
 
-        if (!check_type(&table->columns[i], lit->type, "value",
-                        error, error_size)) {
+        if (!check_value(&table->columns[i], lit->type, error, error_size)) {
             return 0;
         }
 
@@ -795,8 +807,8 @@ static int execute_update(Database *db, const Statement *stmt,
             return 0;
         }
 
-        if (!check_type(&table->columns[index], assign->value.type, "value",
-                        error, error_size)) {
+        if (!check_value(&table->columns[index], assign->value.type,
+                         error, error_size)) {
             return 0;
         }
 

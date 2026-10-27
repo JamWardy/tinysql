@@ -18,6 +18,7 @@
 typedef struct {
     char *name;
     DataType type;
+    int not_null;  // 1 for NOT NULL; the executor keeps NULLs out.
 } Column;
 
 // A stored value: its column's type, or TYPE_NULL, for which as is

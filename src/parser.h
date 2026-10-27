@@ -11,10 +11,11 @@ typedef enum {
     TYPE_NULL  // Only a value can be NULL; a column is INT or TEXT.
 } DataType;
 
-// A column in CREATE TABLE: `name TEXT`.
+// A column in CREATE TABLE: `name TEXT` or `id INT NOT NULL`.
 typedef struct {
     char name[MAX_TOKEN_LENGTH];
     DataType type;
+    int not_null;  // 1 for NOT NULL.
 } ColumnDef;
 
 // A value written in the SQL: `25`, `'Alice'` or `NULL`. For NULL, as

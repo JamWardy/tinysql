@@ -98,6 +98,7 @@ Table *database_create_table(Database *db, const char *name,
 
     for (size_t i = 0; i < column_count; i++) {
         table->columns[i].type = columns[i].type;
+        table->columns[i].not_null = columns[i].not_null;
         table->columns[i].name = copy_string(columns[i].name);
 
         if (!table->columns[i].name) {

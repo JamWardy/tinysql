@@ -23,7 +23,7 @@ statement     = ( create_stmt | insert_stmt | select_stmt | delete_stmt
 create_stmt   = CREATE TABLE IDENTIFIER
                 LPAREN column_def { COMMA column_def } RPAREN
 
-column_def    = IDENTIFIER column_type
+column_def    = IDENTIFIER column_type [ NOT NULL ]
 column_type   = INT | TEXT
 
 insert_stmt   = INSERT INTO IDENTIFIER
@@ -64,6 +64,7 @@ Accepted:
 
 ```sql
 CREATE TABLE users (id INT, name TEXT, age INT);
+CREATE TABLE orders (id INT NOT NULL, item TEXT NOT NULL, note TEXT);
 INSERT INTO users VALUES (1, 'Alice', 25);
 INSERT INTO users VALUES (-3, 'Eve', 30);
 INSERT INTO users VALUES (2, NULL, NULL);    -- any column can be NULL
@@ -92,6 +93,7 @@ Rejected:
 ```sql
 CREATE TABLE users ();             -- needs at least one column
 CREATE TABLE users (id INTEGER);   -- type must be INT or TEXT
+CREATE TABLE users (id NOT NULL);  -- NOT NULL goes after the type
 INSERT INTO users VALUES (1, 2,);  -- trailing comma
 INSERT INTO users VALUES (--1);    -- only one '-'
 INSERT INTO users VALUES (-'a');   -- '-' only before a number
@@ -124,9 +126,9 @@ depend on what tables exist:
 - the table exists (or, for `CREATE`, doesn't already exist)
 - column names are unique within a `CREATE TABLE`
 - `INSERT` has the right number of values, of the right types (`NULL`
-  fits any column)
+  fits any column that isn't `NOT NULL`)
 - `UPDATE` sets columns that exist, each at most once, to values of the
-  right types or `NULL`
+  right types, or to `NULL` if the column isn't `NOT NULL`
 - `SELECT` names columns that exist, including the `ORDER BY` column
   and the columns inside aggregates
 - `SUM` is given an `INT` column
@@ -179,8 +181,9 @@ keywords, so they can't be used as table or column names.
 ## NULL
 
 `NULL` means "no value": unknown or missing, such as an age nobody gave.
-It isn't 0 or `''`, and any column can hold it. Results print it as
-`NULL`, so it doesn't look the same as an empty string.
+It isn't 0 or `''`, and any column can hold it unless it's declared
+`NOT NULL`. Results print it as `NULL`, so it doesn't look the same as
+an empty string.
 
 Because a `NULL` has no value, comparing one with anything, even another
 `NULL`, gives neither true nor false but *unknown*. `WHERE` keeps only

@@ -45,13 +45,16 @@ static void print_tables(const Database *db) {
 }
 
 // Prints the CREATE TABLE statement that would make an empty copy of
-// table, e.g. CREATE TABLE users (id INT, name TEXT);
+// table, e.g. CREATE TABLE users (id INT NOT NULL, name TEXT);
 static void print_create(const Table *table) {
     printf("CREATE TABLE %s (", table->name);
 
     for (size_t i = 0; i < table->column_count; i++) {
-        printf("%s%s %s", i > 0 ? ", " : "", table->columns[i].name,
-               data_type_name(table->columns[i].type));
+        const Column *column = &table->columns[i];
+
+        printf("%s%s %s%s", i > 0 ? ", " : "", column->name,
+               data_type_name(column->type),
+               column->not_null ? " NOT NULL" : "");
     }
 
     puts(");");
