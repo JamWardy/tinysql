@@ -116,6 +116,21 @@ typedef struct {
     int root;
 } Filter;
 
+// Table columns a query reads, by position in each row: the selected
+// columns, or the column each aggregate reads.
+typedef struct {
+    size_t index[MAX_COLUMNS];
+    size_t count;
+} ColumnList;
+
+// The rows a query matched. These are pointers into the table, not
+// copies, so they're valid only until the table next changes. Whoever
+// fills one frees rows when done.
+typedef struct {
+    const Row **rows;
+    size_t count;
+} RowList;
+
 // Returns <0, 0 or >0 as a is less than, equal to or greater than b,
 // which must have the same type and not be NULL. Text compares byte by
 // byte, so 'B' < 'a' and '10' < '9'.
@@ -230,13 +245,9 @@ static int row_matches(const Row *row, const Filter *filter) {
 // up this way once, before any row is read.
 static int find_column(const Table *table, const char *name,
                        size_t *index, char *error, size_t error_size) {
-    int found = table_find_column(table, name);
-
-    if (found < 0) {
+    if (!table_find_column(table, name, index)) {
         return fail(error, error_size, "no such column '%s'", name);
     }
-
-    *index = (size_t)found;
     return 1;
 }
 
@@ -310,28 +321,27 @@ static void print_value(const Value *value, int width) {
 //   ------+----
 //   Alice |  25
 //   (1 row)
-static void print_rows(const char *const *names, const size_t *columns,
-                       int column_count, const Row *const *rows,
-                       size_t row_count) {
+static void print_rows(const char *const *names, const ColumnList *columns,
+                       const RowList *rows) {
     int widths[MAX_COLUMNS];
 
-    for (int i = 0; i < column_count; i++) {
+    for (size_t i = 0; i < columns->count; i++) {
         widths[i] = (int)strlen(names[i]);
 
-        for (size_t r = 0; r < row_count; r++) {
-            int width = value_width(&rows[r]->values[columns[i]]);
+        for (size_t r = 0; r < rows->count; r++) {
+            int width = value_width(&rows->rows[r]->values[columns->index[i]]);
             if (width > widths[i]) {
                 widths[i] = width;
             }
         }
     }
 
-    for (int i = 0; i < column_count; i++) {
+    for (size_t i = 0; i < columns->count; i++) {
         printf("%s%-*s", i > 0 ? " | " : "", widths[i], names[i]);
     }
     putchar('\n');
 
-    for (int i = 0; i < column_count; i++) {
+    for (size_t i = 0; i < columns->count; i++) {
         printf("%s", i > 0 ? "-+-" : "");
         for (int w = 0; w < widths[i]; w++) {
             putchar('-');
@@ -339,15 +349,15 @@ static void print_rows(const char *const *names, const size_t *columns,
     }
     putchar('\n');
 
-    for (size_t r = 0; r < row_count; r++) {
-        for (int i = 0; i < column_count; i++) {
+    for (size_t r = 0; r < rows->count; r++) {
+        for (size_t i = 0; i < columns->count; i++) {
             printf("%s", i > 0 ? " | " : "");
-            print_value(&rows[r]->values[columns[i]], widths[i]);
+            print_value(&rows->rows[r]->values[columns->index[i]], widths[i]);
         }
         putchar('\n');
     }
 
-    printf("(%zu %s)\n", row_count, row_count == 1 ? "row" : "rows");
+    printf("(%zu %s)\n", rows->count, rows->count == 1 ? "row" : "rows");
 }
 
 // qsort passes its comparison function only the two elements, so the
@@ -414,18 +424,18 @@ static void aggregate_heading(const Aggregate *agg, char *heading,
 // COUNT(*) counts rows, NULLs and all. SUM, MIN and MAX skip NULLs, and
 // give NULL when there's no other value: no rows, or only NULLs.
 static int compute_aggregate(const Aggregate *agg, size_t column,
-                             const Row *const *rows, size_t count,
-                             Value *out, char *error, size_t error_size) {
+                             const RowList *rows, Value *out,
+                             char *error, size_t error_size) {
     if (agg->func == AGG_COUNT) {
         out->type = TYPE_INT;
-        out->as.integer = (long long)count;
+        out->as.integer = (long long)rows->count;
         return 1;
     }
 
     out->type = TYPE_NULL;
 
-    for (size_t r = 0; r < count; r++) {
-        const Value *value = &rows[r]->values[column];
+    for (size_t r = 0; r < rows->count; r++) {
+        const Value *value = &rows->rows[r]->values[column];
 
         if (value->type == TYPE_NULL) {
             continue;
@@ -482,57 +492,56 @@ static int compute_aggregate(const Aggregate *agg, size_t column,
 // nothing to sort and LIMIT matters only when it's 0: then the headings
 // print but the row doesn't.
 static int print_aggregates(const SelectStatement *select,
-                            const size_t *columns,
-                            const Row *const *rows, size_t count,
+                            const ColumnList *columns, const RowList *rows,
                             char *error, size_t error_size) {
-    int n = select->aggregate_count;
     // Room for the longest function name, the column name, "(", ")".
     char headings[MAX_COLUMNS][MAX_TOKEN_LENGTH + 8];
     const char *names[MAX_COLUMNS];
     Value values[MAX_COLUMNS];
-    size_t positions[MAX_COLUMNS];  // Where each result is in values.
+    ColumnList positions;  // Where each result is in values.
 
     // Compute every result before printing, so an error such as SUM
     // overflowing doesn't leave half a table.
-    for (int i = 0; i < n; i++) {
+    for (size_t i = 0; i < columns->count; i++) {
         const Aggregate *agg = &select->aggregates[i];
 
-        if (!compute_aggregate(agg, columns[i], rows, count, &values[i],
+        if (!compute_aggregate(agg, columns->index[i], rows, &values[i],
                                error, error_size)) {
             return 0;
         }
 
         aggregate_heading(agg, headings[i], sizeof(headings[i]));
         names[i] = headings[i];
-        positions[i] = (size_t)i;
+        positions.index[i] = i;
     }
+    positions.count = columns->count;
 
     // The results make one row of their own, so print_rows can lay it
     // out like any other.
-    Row result = { values, (size_t)n };
+    Row result = { values, columns->count };
     const Row *result_rows[] = { &result };
     int show_row = !select->has_limit || select->limit > 0;
+    RowList result_list = { result_rows, show_row ? 1 : 0 };
 
-    print_rows(names, positions, n, result_rows, show_row ? 1 : 0);
+    print_rows(names, &positions, &result_list);
     return 1;
 }
 
-// Fills columns with the table column for each selected column, all of
-// them for SELECT *, and sets *column_count.
+// Fills out with the table column for each selected column: all of
+// them, in order, for SELECT *.
 static int resolve_columns(const Table *table, const SelectStatement *select,
-                           size_t *columns, int *column_count,
-                           char *error, size_t error_size) {
+                           ColumnList *out, char *error, size_t error_size) {
     if (select->select_all) {
-        *column_count = (int)table->column_count;
-        for (int i = 0; i < *column_count; i++) {
-            columns[i] = (size_t)i;
+        out->count = table->column_count;
+        for (size_t i = 0; i < out->count; i++) {
+            out->index[i] = i;
         }
         return 1;
     }
 
-    *column_count = select->column_count;
-    for (int i = 0; i < *column_count; i++) {
-        if (!find_column(table, select->columns[i], &columns[i],
+    out->count = (size_t)select->column_count;
+    for (size_t i = 0; i < out->count; i++) {
+        if (!find_column(table, select->columns[i], &out->index[i],
                          error, error_size)) {
             return 0;
         }
@@ -541,26 +550,27 @@ static int resolve_columns(const Table *table, const SelectStatement *select,
     return 1;
 }
 
-// Fills columns with the table column each aggregate reads, checking
-// that SUM is given an INT column.
+// Fills out with the table column each aggregate reads, checking that
+// SUM is given an INT column.
 static int resolve_aggregates(const Table *table,
                               const SelectStatement *select,
-                              size_t *columns,
-                              char *error, size_t error_size) {
-    for (int i = 0; i < select->aggregate_count; i++) {
+                              ColumnList *out, char *error, size_t error_size) {
+    out->count = (size_t)select->aggregate_count;
+
+    for (size_t i = 0; i < out->count; i++) {
         const Aggregate *agg = &select->aggregates[i];
 
         if (agg->func == AGG_COUNT) {
-            columns[i] = 0;  // COUNT(*) reads no column.
+            out->index[i] = 0;  // COUNT(*) reads no column.
             continue;
         }
 
-        if (!find_column(table, agg->column, &columns[i],
+        if (!find_column(table, agg->column, &out->index[i],
                          error, error_size)) {
             return 0;
         }
 
-        const Column *column = &table->columns[columns[i]];
+        const Column *column = &table->columns[out->index[i]];
         if (agg->func == AGG_SUM && column->type != TYPE_INT) {
             return fail(error, error_size,
                         "SUM needs an INT column but '%s' is %s",
@@ -571,76 +581,69 @@ static int resolve_aggregates(const Table *table,
     return 1;
 }
 
-// Sets *order_column to the ORDER BY column, or -1 if there's none.
+// Sets *order_column to the ORDER BY column. With no ORDER BY it's set
+// to 0 and unused: select->has_order says whether there is one.
 static int resolve_order_by(const Table *table,
-                            const SelectStatement *select, int *order_column,
+                            const SelectStatement *select,
+                            size_t *order_column,
                             char *error, size_t error_size) {
-    *order_column = -1;
+    *order_column = 0;
 
     if (!select->has_order) {
         return 1;
     }
 
-    size_t index;
-
-    if (!find_column(table, select->order_column, &index,
-                     error, error_size)) {
-        return 0;
-    }
-
-    *order_column = (int)index;
-    return 1;
+    return find_column(table, select->order_column, order_column,
+                       error, error_size);
 }
 
-// Sets *rows to a new array of pointers to the rows filter matches, in
-// table order, and *count to how many there are. Pointers, not copies:
-// the rows stay put. The caller frees *rows.
+// Fills out with the rows filter matches, in table order. out->rows is
+// a new array, which the caller frees.
 static int collect_rows(const Table *table, const Filter *filter,
-                        const Row ***rows, size_t *count,
-                        char *error, size_t error_size) {
-    *rows = malloc(table->row_count * sizeof(**rows));
+                        RowList *out, char *error, size_t error_size) {
+    out->rows = malloc(table->row_count * sizeof(*out->rows));
 
     // malloc(0) may return NULL, which isn't a failure.
-    if (!*rows && table->row_count > 0) {
+    if (!out->rows && table->row_count > 0) {
         return fail(error, error_size, "out of memory");
     }
 
-    *count = 0;
+    out->count = 0;
     for (size_t r = 0; r < table->row_count; r++) {
         if (row_matches(&table->rows[r], filter)) {
-            (*rows)[(*count)++] = &table->rows[r];
+            out->rows[out->count++] = &table->rows[r];
         }
     }
 
     return 1;
 }
 
-// Sorts rows by order_column (if not -1), cuts them to the LIMIT and
-// prints the chosen columns.
+// Sorts rows in place by the ORDER BY column, if there is one, cuts
+// rows->count to the LIMIT and prints the chosen columns.
 static void print_sorted_rows(const Table *table,
                               const SelectStatement *select,
-                              const size_t *columns, int column_count,
-                              int order_column,
-                              const Row **rows, size_t count) {
-    // Skipped for under two rows; rows may be NULL, which qsort doesn't
-    // allow even with nothing to sort.
-    if (order_column >= 0 && count > 1) {
-        sort_by.column = (size_t)order_column;
+                              const ColumnList *columns, size_t order_column,
+                              RowList *rows) {
+    // Skipped for under two rows; rows->rows may be NULL, which qsort
+    // doesn't allow even with nothing to sort.
+    if (select->has_order && rows->count > 1) {
+        sort_by.column = order_column;
         sort_by.descending = select->descending;
-        qsort(rows, count, sizeof(*rows), compare_rows);
+        qsort(rows->rows, rows->count, sizeof(*rows->rows), compare_rows);
     }
 
-    if (select->has_limit && (unsigned long long)select->limit < count) {
-        count = (size_t)select->limit;
+    if (select->has_limit &&
+        (unsigned long long)select->limit < rows->count) {
+        rows->count = (size_t)select->limit;
     }
 
     const char *names[MAX_COLUMNS];
 
-    for (int i = 0; i < column_count; i++) {
-        names[i] = table->columns[columns[i]].name;
+    for (size_t i = 0; i < columns->count; i++) {
+        names[i] = table->columns[columns->index[i]].name;
     }
 
-    print_rows(names, columns, column_count, rows, count);
+    print_rows(names, columns, rows);
 }
 
 // SELECT of columns, e.g. SELECT name, age FROM people WHERE age > 30.
@@ -648,14 +651,12 @@ static int select_rows(const Table *table, const SelectStatement *select,
                        char *error, size_t error_size) {
     // Check every name before reading any row, so a bad query fails
     // before any work is done or anything is printed.
-    size_t columns[MAX_COLUMNS];
-    int column_count;
+    ColumnList columns;
     Filter filter;
     const Filter *where;
-    int order_column;
+    size_t order_column;
 
-    if (!resolve_columns(table, select, columns, &column_count,
-                         error, error_size) ||
+    if (!resolve_columns(table, select, &columns, error, error_size) ||
         !resolve_where(table, select->has_where, &select->where, &filter,
                        &where, error, error_size) ||
         !resolve_order_by(table, select, &order_column,
@@ -663,16 +664,14 @@ static int select_rows(const Table *table, const SelectStatement *select,
         return 0;
     }
 
-    const Row **rows;
-    size_t count;
+    RowList matched;
 
-    if (!collect_rows(table, where, &rows, &count, error, error_size)) {
+    if (!collect_rows(table, where, &matched, error, error_size)) {
         return 0;
     }
 
-    print_sorted_rows(table, select, columns, column_count, order_column,
-                      rows, count);
-    free(rows);
+    print_sorted_rows(table, select, &columns, order_column, &matched);
+    free(matched.rows);
     return 1;
 }
 
@@ -680,14 +679,14 @@ static int select_rows(const Table *table, const SelectStatement *select,
 static int select_aggregates(const Table *table,
                              const SelectStatement *select,
                              char *error, size_t error_size) {
-    size_t columns[MAX_COLUMNS];  // The column each aggregate reads.
+    ColumnList columns;  // The column each aggregate reads.
     Filter filter;
     const Filter *where;
-    int order_column;  // Unused: one result row has nothing to sort.
+    size_t order_column;  // Unused: one result row has nothing to sort.
 
     // ORDER BY is still resolved, so a bad column name is an error here
     // as it is everywhere else.
-    if (!resolve_aggregates(table, select, columns, error, error_size) ||
+    if (!resolve_aggregates(table, select, &columns, error, error_size) ||
         !resolve_where(table, select->has_where, &select->where, &filter,
                        &where, error, error_size) ||
         !resolve_order_by(table, select, &order_column,
@@ -695,16 +694,14 @@ static int select_aggregates(const Table *table,
         return 0;
     }
 
-    const Row **rows;
-    size_t count;
+    RowList matched;
 
-    if (!collect_rows(table, where, &rows, &count, error, error_size)) {
+    if (!collect_rows(table, where, &matched, error, error_size)) {
         return 0;
     }
 
-    int ok = print_aggregates(select, columns, rows, count,
-                              error, error_size);
-    free(rows);
+    int ok = print_aggregates(select, &columns, &matched, error, error_size);
+    free(matched.rows);
     return ok;
 }
 

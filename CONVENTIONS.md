@@ -58,13 +58,13 @@ A function that can fail does one of two things:
   only when the return value is already the success flag.
 - **At most two `*` in a parameter.** A `***` means an array is being
   returned through an out parameter; return a struct instead.
-- **An array travels with its count.** Put them in one struct, as the
-  parser does with `CreateStatement.columns` and `.column_count`, rather
-  than passing two parameters that must agree.
+- **An array travels with its count.** Put them in one struct, such as
+  the executor's `ColumnList` and `RowList` or the parser's
+  `CreateStatement`, rather than passing two parameters that must agree.
 - **A buffer travels with its size**, either as a `size_t size`
-  parameter (`copy_text`, `fail`) or fixed by its type (a struct with a
-  `[MAX_COLUMNS]` array). Never rely on the caller just knowing it's big
-  enough.
+  parameter (`copy_text`, `fail`, `read_name`) or fixed by its type
+  (`ColumnList`, `NullBitmap`). Never rely on the caller just knowing
+  it's big enough.
 - **Copy before freeing.** When replacing heap memory, build the new
   value first and free the old one only once that worked, as
   `table_set_value` does. Running out of memory then changes nothing.
@@ -88,7 +88,9 @@ reasoning. In short:
   structs still use `int`; cast where the two meet rather than spreading
   `int` further.
 - **"There isn't one" is a flag**, `has_where`, `has_order`, alongside
-  the value, not a special value such as `-1`. A `NULL` pointer is fine
+  the value, not a special value such as `-1`. A lookup that may find
+  nothing returns 1 or 0 and writes what it found through a pointer, as
+  `table_find_column` does. A `NULL` pointer is fine
   for an optional pointer, such as `resolve_where`'s filter.
 - **No `default:` in a switch over our own enums.** List every case, so
   the compiler warns about each switch that needs updating when a value
@@ -147,14 +149,6 @@ reasoning. In short:
 
 Known exceptions, to fix rather than copy:
 
-- `collect_rows` returns its array through a `const Row ***` and a
-  separate count. It should return a `RowList` struct.
-- `resolve_columns` and `resolve_aggregates` write into a `size_t *`
-  whose size is assumed to be `MAX_COLUMNS`, with the count separate.
-  They should fill a `ColumnList` struct.
-- `order_column` uses `-1` for "no ORDER BY", which is why it's an `int`.
-- `free_texts` in `persist.c` duplicates `free_values` in `table.c`,
-  which should be exported from `table.h` instead.
 - `FIXED_ARRAYS_VS_HEAP.md` says `tokens` and `stmt` live in `main`; they
   moved to `run_statement`.
 

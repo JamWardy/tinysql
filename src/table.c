@@ -15,8 +15,7 @@ static char *copy_string(const char *s) {
     return copy;
 }
 
-// Frees the strings in the first count values of a row.
-static void free_values(Value *values, size_t count) {
+void values_free(Value *values, size_t count) {
     for (size_t i = 0; i < count; i++) {
         if (values[i].type == TYPE_TEXT) {
             free(values[i].as.text);
@@ -33,7 +32,7 @@ static void free_columns(Column *columns, size_t count) {
 
 static void table_free(Table *table) {
     for (size_t i = 0; i < table->row_count; i++) {
-        free_values(table->rows[i].values, table->rows[i].count);
+        values_free(table->rows[i].values, table->rows[i].count);
         free(table->rows[i].values);
     }
 
@@ -124,14 +123,15 @@ void database_drop_table(Database *db, Table *table) {
     db->count--;
 }
 
-int table_find_column(const Table *table, const char *name) {
+int table_find_column(const Table *table, const char *name, size_t *index) {
     for (size_t i = 0; i < table->column_count; i++) {
         if (strcmp(table->columns[i].name, name) == 0) {
-            return (int)i;
+            *index = i;
+            return 1;
         }
     }
 
-    return -1;
+    return 0;
 }
 
 int table_append_row(Table *table, const Value *values) {
@@ -163,7 +163,7 @@ int table_append_row(Table *table, const Value *values) {
             copy[i].as.text = copy_string(values[i].as.text);
 
             if (!copy[i].as.text) {
-                free_values(copy, i);
+                values_free(copy, i);
                 free(copy);
                 return 0;
             }
@@ -196,9 +196,9 @@ int table_set_value(Table *table, size_t row, size_t column,
 
     // Free the old value only once the new one is ready, so a failure
     // leaves the old one in place. The old value may be NULL, which
-    // free_values knows has no text to free.
+    // values_free knows has no text to free.
     Value *slot = &table->rows[row].values[column];
-    free_values(slot, 1);
+    values_free(slot, 1);
     *slot = copy;
     return 1;
 }
@@ -207,7 +207,7 @@ void table_delete_row(Table *table, size_t index) {
     assert(index < table->row_count);
 
     Row *row = &table->rows[index];
-    free_values(row->values, row->count);
+    values_free(row->values, row->count);
     free(row->values);
 
     // Close the gap. The array keeps its capacity for later inserts.

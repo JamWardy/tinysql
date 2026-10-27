@@ -70,8 +70,13 @@ Table *database_create_table(Database *db, const char *name,
 // down one place.
 void database_drop_table(Database *db, Table *table);
 
-// Returns the index of the column with exactly this name, or -1.
-int table_find_column(const Table *table, const char *name);
+// Looks for the column with exactly this name. If there is one, sets
+// *index to its position and returns 1; otherwise returns 0.
+int table_find_column(const Table *table, const char *name, size_t *index);
+
+// Frees the text owned by the first count values, which may be NULL or
+// any type. The array itself is the caller's.
+void values_free(Value *values, size_t count);
 
 // Appends a row with copies of values, which must hold column_count
 // values, each NULL or of its column's type; the caller validates first.

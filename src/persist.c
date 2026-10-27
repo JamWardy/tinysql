@@ -47,8 +47,18 @@
 // Bytes in a row's null bitmap.
 #define BITMAP_SIZE(column_count) (((column_count) + 7) / 8)
 
-static int bit_is_set(const unsigned char *bitmap, size_t i) {
-    return (bitmap[i / 8] >> (i % 8)) & 1;
+// A row's null bitmap, with room for the most columns a table can have.
+// Only the first BITMAP_SIZE(column_count) bytes go in the file.
+typedef struct {
+    unsigned char bytes[BITMAP_SIZE(MAX_COLUMNS)];
+} NullBitmap;
+
+static void set_null_bit(NullBitmap *bitmap, size_t i) {
+    bitmap->bytes[i / 8] |= (unsigned char)(1 << (i % 8));
+}
+
+static int null_bit_is_set(const NullBitmap *bitmap, size_t i) {
+    return (bitmap->bytes[i / 8] >> (i % 8)) & 1;
 }
 
 // ---- Saving ----
@@ -70,14 +80,14 @@ static void write_string(FILE *file, const char *s) {
 }
 
 static void write_row(FILE *file, const Row *row) {
-    unsigned char bitmap[BITMAP_SIZE(MAX_COLUMNS)] = { 0 };
+    NullBitmap bitmap = { { 0 } };
 
     for (size_t i = 0; i < row->count; i++) {
         if (row->values[i].type == TYPE_NULL) {
-            bitmap[i / 8] |= (unsigned char)(1 << (i % 8));
+            set_null_bit(&bitmap, i);
         }
     }
-    fwrite(bitmap, 1, BITMAP_SIZE(row->count), file);
+    fwrite(bitmap.bytes, 1, BITMAP_SIZE(row->count), file);
 
     for (size_t i = 0; i < row->count; i++) {
         const Value *value = &row->values[i];
@@ -268,12 +278,13 @@ static int read_chars(Reader *r, char *out, size_t length) {
     return 1;
 }
 
-// Reads a table or column name into a buffer of MAX_TOKEN_LENGTH, the
-// same limit the tokeniser puts on names typed in SQL.
-static int read_name(Reader *r, char *out) {
+// Reads a table or column name into out (size bytes). Callers pass
+// MAX_TOKEN_LENGTH arrays, the same limit the tokeniser puts on names
+// typed in SQL.
+static int read_name(Reader *r, char *out, size_t size) {
     size_t length;
 
-    if (!read_length(r, MAX_TOKEN_LENGTH - 1, &length)) {
+    if (!read_length(r, size - 1, &length)) {
         return 0;
     }
     if (length == 0) {
@@ -305,33 +316,22 @@ static int read_text(Reader *r, char **out) {
     return 1;
 }
 
-// Frees the TEXT values among the first count values.
-static void free_texts(Value *values, size_t count) {
-    for (size_t i = 0; i < count; i++) {
-        if (values[i].type == TYPE_TEXT) {
-            free(values[i].as.text);
-        }
-    }
-}
-
-// Reads a row's null bitmap into bitmap, which must hold
-// BITMAP_SIZE(MAX_COLUMNS) bytes. Version 1 rows have none, so it's
+// Reads a row's null bitmap into out. Version 1 rows have none, so it's
 // left all 0: nothing is NULL.
-static int read_bitmap(Reader *r, const Table *table,
-                       unsigned char *bitmap) {
+static int read_bitmap(Reader *r, const Table *table, NullBitmap *out) {
     size_t size = BITMAP_SIZE(table->column_count);
 
-    memset(bitmap, 0, BITMAP_SIZE(MAX_COLUMNS));
+    memset(out, 0, sizeof(*out));
     if (r->version == 1) {
         return 1;
     }
 
-    if (!read_bytes(r, bitmap, size)) {
+    if (!read_bytes(r, out->bytes, size)) {
         return 0;
     }
 
     for (size_t i = table->column_count; i < size * 8; i++) {
-        if (bit_is_set(bitmap, i)) {
+        if (null_bit_is_set(out, i)) {
             return read_fail(r, "table '%s' has a row with a bad null bitmap",
                              table->name);
         }
@@ -341,15 +341,15 @@ static int read_bitmap(Reader *r, const Table *table,
 
 // Reads one row's values and appends it to table.
 static int read_row(Reader *r, Table *table) {
-    unsigned char bitmap[BITMAP_SIZE(MAX_COLUMNS)];
+    NullBitmap bitmap;
     Value values[MAX_COLUMNS];
 
-    if (!read_bitmap(r, table, bitmap)) {
+    if (!read_bitmap(r, table, &bitmap)) {
         return 0;
     }
 
     for (size_t i = 0; i < table->column_count; i++) {
-        if (bit_is_set(bitmap, i)) {
+        if (null_bit_is_set(&bitmap, i)) {
             values[i].type = TYPE_NULL;
             continue;
         }
@@ -366,14 +366,14 @@ static int read_row(Reader *r, Table *table) {
         }
 
         if (!ok) {
-            free_texts(values, i);
+            values_free(values, i);
             return 0;
         }
     }
 
     // The table keeps its own copies, so ours are freed either way.
     int ok = table_append_row(table, values);
-    free_texts(values, table->column_count);
+    values_free(values, table->column_count);
 
     return ok ? 1 : read_fail(r, "out of memory");
 }
@@ -383,7 +383,8 @@ static int read_table(Reader *r, Database *db) {
     ColumnDef columns[MAX_COLUMNS];
     uint64_t column_count;
 
-    if (!read_name(r, name) || !read_uint(r, 4, &column_count)) {
+    if (!read_name(r, name, sizeof(name)) ||
+        !read_uint(r, 4, &column_count)) {
         return 0;
     }
 
@@ -415,7 +416,7 @@ static int read_table(Reader *r, Database *db) {
                              name, (unsigned long long)type);
         }
 
-        if (!read_name(r, columns[i].name)) {
+        if (!read_name(r, columns[i].name, sizeof(columns[i].name))) {
             return 0;
         }
 
