@@ -325,6 +325,14 @@ static const char *aggregate_name(AggregateFunc func) {
     return "UNKNOWN";
 }
 
+// Writes the column heading for agg into heading, e.g. "COUNT(*)" or
+// "MAX(age)". Only formats the text; print_rows prints it.
+static void aggregate_heading(const Aggregate *agg, char *heading,
+                              size_t size) {
+    snprintf(heading, size, "%s(%s)", aggregate_name(agg->func),
+             agg->func == AGG_COUNT ? "*" : agg->column);
+}
+
 // Sets *out to agg over rows, reading the table column at index column
 // (unused for COUNT). Text in *out points into a row, so it's only for
 // printing straight away.
@@ -415,9 +423,7 @@ static int print_aggregates(const SelectStatement *select,
             return 0;
         }
 
-        snprintf(headings[i], sizeof(headings[i]), "%s(%s)",
-                 aggregate_name(agg->func),
-                 agg->func == AGG_COUNT ? "*" : agg->column);
+        aggregate_heading(agg, headings[i], sizeof(headings[i]));
         names[i] = headings[i];
         positions[i] = (size_t)i;
     }
