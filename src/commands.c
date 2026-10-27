@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "text.h"
+
 // One more than the longest table name (MAX_TOKEN_LENGTH - 1 characters)
 // needs, so a word cut short to fit is still too long to match one.
 #define MAX_WORD (MAX_TOKEN_LENGTH + 1)
@@ -26,7 +28,7 @@ static int next_word(const char **s, char *word, size_t size) {
         return 0;
     }
 
-    snprintf(word, size, "%.*s", (int)(*s - start), start);
+    copy_slice(word, size, start, (size_t)(*s - start));
     return 1;
 }
 

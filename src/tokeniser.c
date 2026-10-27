@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "error.h"
+#include "text.h"
 
 const char *token_type_name(TokenType type) {
     switch (type) {
@@ -144,8 +145,7 @@ static int add_token(
     Token *token = &list->tokens[list->count++];
 
     token->type = type;
-    memcpy(token->text, start, (size_t)length);
-    token->text[length] = '\0';
+    copy_slice(token->text, sizeof(token->text), start, (size_t)length);
     return 1;
 }
 

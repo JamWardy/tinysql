@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "text.h"
+
 typedef enum {
     LINE_OK,
     LINE_TOO_LONG,  // Only the start of the line was kept.
@@ -46,7 +48,7 @@ static void copy_command(char *command, size_t size, const char *line) {
     while (length > 0 && isspace((unsigned char)line[length - 1])) {
         length--;
     }
-    snprintf(command, size, "%.*s", (int)length, line);
+    copy_slice(command, size, line, length);
 }
 
 static int is_blank(const char *s) {

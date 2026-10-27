@@ -6,6 +6,7 @@
 #include <stdlib.h>
 
 #include "error.h"
+#include "text.h"
 
 #define MAX_ERROR 256
 
@@ -74,7 +75,7 @@ static Literal literal_int(long long n) {
 static Literal literal_text(const char *text) {
     Literal lit;
     lit.type = TYPE_TEXT;
-    snprintf(lit.as.text, sizeof(lit.as.text), "%s", text);
+    copy_text(lit.as.text, sizeof(lit.as.text), text);
     return lit;
 }
 
@@ -113,7 +114,7 @@ static int parse_column_def(Parser *p, ColumnDef *out) {
         return 0;
     }
 
-    snprintf(out->name, sizeof(out->name), "%s", name->text);
+    copy_text(out->name, sizeof(out->name), name->text);
     return 1;
 }
 
@@ -155,7 +156,7 @@ static int parse_create(Parser *p, Statement *out) {
     }
 
     out->type = STMT_CREATE;
-    snprintf(out->table_name, sizeof(out->table_name), "%s", name->text);
+    copy_text(out->table_name, sizeof(out->table_name), name->text);
     return 1;
 }
 
@@ -234,7 +235,7 @@ static int parse_insert(Parser *p, Statement *out) {
     }
 
     out->type = STMT_INSERT;
-    snprintf(out->table_name, sizeof(out->table_name), "%s", name->text);
+    copy_text(out->table_name, sizeof(out->table_name), name->text);
     return 1;
 }
 
@@ -291,7 +292,7 @@ static int parse_aggregate(Parser *p, Aggregate *out) {
         if (!column) {
             return 0;
         }
-        snprintf(out->column, sizeof(out->column), "%s", column->text);
+        copy_text(out->column, sizeof(out->column), column->text);
     }
 
     return expect(p, TOKEN_RPAREN, "')'") != NULL;
@@ -353,9 +354,8 @@ static int parse_select_list(Parser *p, SelectStatement *out) {
             return 0;
         }
 
-        snprintf(out->columns[out->column_count],
-                 sizeof(out->columns[out->column_count]),
-                 "%s", column->text);
+        copy_text(out->columns[out->column_count],
+                  sizeof(out->columns[out->column_count]), column->text);
         out->column_count++;
     } while (match(p, TOKEN_COMMA));
 
@@ -390,7 +390,7 @@ static int parse_comparison(Parser *p, Comparison *out) {
         return 0;
     }
 
-    snprintf(out->column, sizeof(out->column), "%s", column->text);
+    copy_text(out->column, sizeof(out->column), column->text);
     return 1;
 }
 
@@ -536,8 +536,8 @@ static int parse_order_by(Parser *p, SelectStatement *select,
     if (!column) {
         return 0;
     }
-    snprintf(select->order_column, sizeof(select->order_column),
-             "%s", column->text);
+    copy_text(select->order_column, sizeof(select->order_column),
+              column->text);
 
     if (match(p, TOKEN_DESC)) {
         select->descending = 1;
@@ -622,7 +622,7 @@ static int parse_select(Parser *p, Statement *out) {
     }
 
     out->type = STMT_SELECT;
-    snprintf(out->table_name, sizeof(out->table_name), "%s", name->text);
+    copy_text(out->table_name, sizeof(out->table_name), name->text);
     return 1;
 }
 
@@ -647,7 +647,7 @@ static int parse_delete(Parser *p, Statement *out) {
     }
 
     out->type = STMT_DELETE;
-    snprintf(out->table_name, sizeof(out->table_name), "%s", name->text);
+    copy_text(out->table_name, sizeof(out->table_name), name->text);
     return 1;
 }
 
@@ -663,7 +663,7 @@ static int parse_assignment(Parser *p, Assignment *out) {
         return 0;
     }
 
-    snprintf(out->column, sizeof(out->column), "%s", column->text);
+    copy_text(out->column, sizeof(out->column), column->text);
     return 1;
 }
 
@@ -708,7 +708,7 @@ static int parse_update(Parser *p, Statement *out) {
     }
 
     out->type = STMT_UPDATE;
-    snprintf(out->table_name, sizeof(out->table_name), "%s", name->text);
+    copy_text(out->table_name, sizeof(out->table_name), name->text);
     return 1;
 }
 
@@ -725,7 +725,7 @@ static int parse_drop(Parser *p, Statement *out) {
     }
 
     out->type = STMT_DROP;
-    snprintf(out->table_name, sizeof(out->table_name), "%s", name->text);
+    copy_text(out->table_name, sizeof(out->table_name), name->text);
     return 1;
 }
 
@@ -773,7 +773,7 @@ int parse(const TokenList *tokens, Statement *out,
          expect(&p, TOKEN_EOF, "end of input") != NULL;
 
     if (!ok) {
-        snprintf(error, error_size, "%s", p.error);
+        copy_text(error, error_size, p.error);
         return 0;
     }
 
