@@ -558,30 +558,19 @@ static void print_sorted_rows(const Table *table,
     print_rows(names, columns, column_count, rows, count);
 }
 
-static int execute_select(Database *db, const Statement *stmt,
-                          char *error, size_t error_size) {
-    const SelectStatement *select = &stmt->as.select;
-    const Table *table = find_table(db, stmt->table_name, error, error_size);
-
-    if (!table) {
-        return 0;
-    }
-
+// SELECT of columns, e.g. SELECT name, age FROM people WHERE age > 30.
+static int select_rows(const Table *table, const SelectStatement *select,
+                       char *error, size_t error_size) {
     // Check every name before reading any row, so a bad query fails
     // before any work is done or anything is printed.
     size_t columns[MAX_COLUMNS];
-    int column_count = 0;  // Unused for aggregates.
+    int column_count;
     Filter filter;
     const Filter *where;
     int order_column;
 
-    int ok = select->has_aggregates
-                 ? resolve_aggregates(table, select, columns,
-                                      error, error_size)
-                 : resolve_columns(table, select, columns, &column_count,
-                                   error, error_size);
-
-    if (!ok ||
+    if (!resolve_columns(table, select, columns, &column_count,
+                         error, error_size) ||
         !resolve_where(table, select->has_where, &select->where, &filter,
                        &where, error, error_size) ||
         !resolve_order_by(table, select, &order_column,
@@ -596,16 +585,56 @@ static int execute_select(Database *db, const Statement *stmt,
         return 0;
     }
 
-    if (select->has_aggregates) {
-        ok = print_aggregates(select, columns, rows, count,
-                              error, error_size);
-    } else {
-        print_sorted_rows(table, select, columns, column_count,
-                          order_column, rows, count);
+    print_sorted_rows(table, select, columns, column_count, order_column,
+                      rows, count);
+    free(rows);
+    return 1;
+}
+
+// SELECT of aggregates, e.g. SELECT COUNT(*), MAX(age) FROM people.
+static int select_aggregates(const Table *table,
+                             const SelectStatement *select,
+                             char *error, size_t error_size) {
+    size_t columns[MAX_COLUMNS];  // The column each aggregate reads.
+    Filter filter;
+    const Filter *where;
+    int order_column;  // Unused: one result row has nothing to sort.
+
+    // ORDER BY is still resolved, so a bad column name is an error here
+    // as it is everywhere else.
+    if (!resolve_aggregates(table, select, columns, error, error_size) ||
+        !resolve_where(table, select->has_where, &select->where, &filter,
+                       &where, error, error_size) ||
+        !resolve_order_by(table, select, &order_column,
+                          error, error_size)) {
+        return 0;
     }
 
+    const Row **rows;
+    size_t count;
+
+    if (!collect_rows(table, where, &rows, &count, error, error_size)) {
+        return 0;
+    }
+
+    int ok = print_aggregates(select, columns, rows, count,
+                              error, error_size);
     free(rows);
     return ok;
+}
+
+static int execute_select(Database *db, const Statement *stmt,
+                          char *error, size_t error_size) {
+    const SelectStatement *select = &stmt->as.select;
+    const Table *table = find_table(db, stmt->table_name, error, error_size);
+
+    if (!table) {
+        return 0;
+    }
+
+    return select->has_aggregates
+               ? select_aggregates(table, select, error, error_size)
+               : select_rows(table, select, error, error_size);
 }
 
 static int execute_delete(Database *db, const Statement *stmt,
