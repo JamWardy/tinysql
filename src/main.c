@@ -5,24 +5,33 @@
 #include "input.h"
 #include "parser.h"
 #include "persist.h"
+#include "print.h"
+#include "result.h"
 #include "table.h"
 #include "tokeniser.h"
 
 #define MAX_ERROR 256
 
-// Tokenises, parses and executes one statement, printing any error, and
-// saves the database to path (if any) after a successful change.
+// Tokenises, parses and executes one statement, printing its result or
+// any error, and saves the database to path (if any) after a successful
+// change.
 static void run_statement(Database *db, const char *path, const char *sql) {
     static TokenList tokens;  // Large, so keep these off the stack.
     static Statement stmt;
     char error[MAX_ERROR];
+    Result result;
+
+    result_init(&result);
 
     if (!tokenise(sql, &tokens, error, sizeof(error)) ||
         !parse(&tokens, &stmt, error, sizeof(error)) ||
-        !execute(db, &stmt, error, sizeof(error))) {
+        !execute(db, &stmt, &result, error, sizeof(error))) {
         printf("Error: %s\n", error);
         return;
     }
+
+    print_result(stmt.type, &result);
+    result_free(&result);
 
     // Rewrite the file after every change, so stopping the program
     // at any point loses nothing that succeeded.

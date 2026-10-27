@@ -1,5 +1,6 @@
 #include "executor.h"
 
+#include <assert.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -178,7 +179,7 @@ static Value literal_to_value(const Literal *lit) {
 }
 
 static int execute_insert(Database *db, const Statement *stmt,
-                          char *error, size_t error_size) {
+                          Result *result, char *error, size_t error_size) {
     const InsertStatement *insert = &stmt->as.insert;
     Table *table = find_table(db, stmt->table_name, error, error_size);
 
@@ -219,6 +220,7 @@ static int execute_insert(Database *db, const Statement *stmt,
         return fail(error, error_size, "out of memory");
     }
 
+    result->changed = 1;
     return 1;
 }
 
@@ -397,75 +399,6 @@ static int resolve_where(const Table *table, int has_where,
     return 1;
 }
 
-// How a NULL prints. Printing nothing, as some databases do, would look
-// the same as the empty string ''.
-#define NULL_TEXT "NULL"
-
-// Number of characters the value takes when printed.
-static int value_width(const Value *value) {
-    switch (value->type) {
-        case TYPE_INT:  return snprintf(NULL, 0, "%lld", value->as.integer);
-        case TYPE_TEXT: return (int)strlen(value->as.text);
-        case TYPE_NULL: return (int)strlen(NULL_TEXT);
-    }
-    return 0;
-}
-
-static void print_value(const Value *value, int width) {
-    // Numbers line up on the right, text and NULL on the left.
-    switch (value->type) {
-        case TYPE_INT:  printf("%*lld", width, value->as.integer); break;
-        case TYPE_TEXT: printf("%-*s", width, value->as.text); break;
-        case TYPE_NULL: printf("%-*s", width, NULL_TEXT); break;
-    }
-}
-
-// Prints the chosen columns of rows, in order, under the headings in
-// names (one per chosen column), e.g.
-//
-//   name  | age
-//   ------+----
-//   Alice |  25
-//   (1 row)
-static void print_rows(const char *const *names, const ColumnList *columns,
-                       const RowList *rows) {
-    int widths[MAX_COLUMNS];
-
-    for (size_t i = 0; i < columns->count; i++) {
-        widths[i] = (int)strlen(names[i]);
-
-        for (size_t r = 0; r < rows->count; r++) {
-            int width = value_width(&rows->rows[r]->values[columns->index[i]]);
-            if (width > widths[i]) {
-                widths[i] = width;
-            }
-        }
-    }
-
-    for (size_t i = 0; i < columns->count; i++) {
-        printf("%s%-*s", i > 0 ? " | " : "", widths[i], names[i]);
-    }
-    putchar('\n');
-
-    for (size_t i = 0; i < columns->count; i++) {
-        printf("%s", i > 0 ? "-+-" : "");
-        for (int w = 0; w < widths[i]; w++) {
-            putchar('-');
-        }
-    }
-    putchar('\n');
-
-    for (size_t r = 0; r < rows->count; r++) {
-        for (size_t i = 0; i < columns->count; i++) {
-            printf("%s", i > 0 ? " | " : "");
-            print_value(&rows->rows[r]->values[columns->index[i]], widths[i]);
-        }
-        putchar('\n');
-    }
-
-    printf("(%zu %s)\n", rows->count, rows->count == 1 ? "row" : "rows");
-}
-
 // qsort passes its comparison function only the two elements, so the
 // ORDER BY column and direction are set here just before sorting.
 static struct {
@@ -516,7 +449,7 @@ static const char *aggregate_name(AggregateFunc func) {
 }
 
 // Writes the column heading for agg into heading, e.g. "COUNT(*)" or
-// "MAX(age)". Only formats the text; print_rows prints it.
+// "MAX(age)".
 static void aggregate_heading(const Aggregate *agg, char *heading,
                               size_t size) {
     snprintf(heading, size, "%s(%s)", aggregate_name(agg->func),
@@ -541,8 +474,8 @@ static long long count_values(const Aggregate *agg, size_t column,
 }
 
 // Sets *out to agg over rows, reading the table column at index column
-// (unused for COUNT(*)). Text in *out points into a row, so it's only
-// for printing straight away.
+// (unused for COUNT(*)). Text in *out points into a row, so copy it
+// before the table changes.
 //
 // COUNT(*) counts rows, NULLs and all, and COUNT(column) the non-NULL
 // values; both give 0 when there are none. SUM, MIN and MAX skip NULLs,
@@ -604,50 +537,41 @@ static int compute_aggregate(const Aggregate *agg, size_t column,
     return 1;
 }
 
-// Prints select's aggregates over rows as a single result row, e.g.
-//
-//   COUNT(*) | MAX(age)
-//   ---------+---------
-//          3 |       41
-//   (1 row)
-//
-// columns holds the table column each aggregate reads, as filled by
-// resolve_aggregates. There's only one result row, so ORDER BY has
-// nothing to sort and LIMIT matters only when it's 0: then the headings
-// print but the row doesn't.
-static int print_aggregates(const SelectStatement *select,
+// Fills result with select's aggregates over rows as a single row,
+// under headings such as "COUNT(*)". columns holds the table column each
+// aggregate reads, as filled by resolve_aggregates. There's only one
+// row, so ORDER BY has nothing to sort and LIMIT matters only when it's
+// 0: then the result has its columns but no row.
+static int aggregate_result(const Table *table,
+                            const SelectStatement *select,
                             const ColumnList *columns, const RowList *rows,
-                            char *error, size_t error_size) {
-    // Room for the longest function name, the column name, "(", ")".
-    char headings[MAX_COLUMNS][MAX_TOKEN_LENGTH + 8];
-    const char *names[MAX_COLUMNS];
+                            Result *result, char *error, size_t error_size) {
     Value values[MAX_COLUMNS];
-    ColumnList positions;  // Where each result is in values.
 
-    // Compute every result before printing, so an error such as SUM
-    // overflowing doesn't leave half a table.
     for (size_t i = 0; i < columns->count; i++) {
         const Aggregate *agg = &select->aggregates[i];
+        char heading[MAX_HEADING];
 
         if (!compute_aggregate(agg, columns->index[i], rows, &values[i],
                                error, error_size)) {
             return 0;
         }
 
-        aggregate_heading(agg, headings[i], sizeof(headings[i]));
-        names[i] = headings[i];
-        positions.index[i] = i;
+        // COUNT gives an INT whatever it counts; the others give a value
+        // from their column, or NULL.
+        DataType type = agg->func == AGG_COUNT
+                            ? TYPE_INT
+                            : table->columns[columns->index[i]].type;
+
+        aggregate_heading(agg, heading, sizeof(heading));
+        result_add_column(result, heading, type);
     }
-    positions.count = columns->count;
 
-    // The results make one row of their own, so print_rows can lay it
-    // out like any other.
-    Row result = { values, columns->count };
-    const Row *result_rows[] = { &result };
-    int show_row = !select->has_limit || select->limit > 0;
-    RowList result_list = { result_rows, show_row ? 1 : 0 };
+    int has_row = !select->has_limit || select->limit > 0;
 
-    print_rows(names, &positions, &result_list);
+    if (has_row && !result_append_row(result, values)) {
+        return fail(error, error_size, "out of memory");
+    }
     return 1;
 }
 
@@ -852,12 +776,10 @@ static int collect_rows(const Table *table, const Filter *filter,
     return 1;
 }
 
-// Sorts rows in place by the ORDER BY column, if there is one, cuts
-// rows->count to the LIMIT and prints the chosen columns.
-static void print_sorted_rows(const Table *table,
-                              const SelectStatement *select,
-                              const ColumnList *columns, size_t order_column,
-                              RowList *rows) {
+// Sorts rows in place by the ORDER BY column, if there is one, and
+// cuts rows->count to the LIMIT.
+static void sort_and_limit(const SelectStatement *select,
+                           size_t order_column, RowList *rows) {
     // Skipped for under two rows; rows->rows may be NULL, which qsort
     // doesn't allow even with nothing to sort.
     if (select->has_order && rows->count > 1) {
@@ -870,21 +792,37 @@ static void print_sorted_rows(const Table *table,
         (unsigned long long)select->limit < rows->count) {
         rows->count = (size_t)select->limit;
     }
+}
 
-    const char *names[MAX_COLUMNS];
-
+// Fills result with the chosen columns of rows, in order, under the
+// table's column names.
+static int rows_result(const Table *table, const ColumnList *columns,
+                       const RowList *rows, Result *result,
+                       char *error, size_t error_size) {
     for (size_t i = 0; i < columns->count; i++) {
-        names[i] = table->columns[columns->index[i]].name;
+        const Column *column = &table->columns[columns->index[i]];
+        result_add_column(result, column->name, column->type);
     }
 
-    print_rows(names, columns, rows);
+    for (size_t r = 0; r < rows->count; r++) {
+        Value values[MAX_COLUMNS];  // Borrowed from the row, not copies.
+
+        for (size_t i = 0; i < columns->count; i++) {
+            values[i] = rows->rows[r]->values[columns->index[i]];
+        }
+
+        if (!result_append_row(result, values)) {
+            return fail(error, error_size, "out of memory");
+        }
+    }
+    return 1;
 }
 
 // SELECT of columns, e.g. SELECT name, age FROM people WHERE age > 30.
 static int select_rows(const Table *table, const SelectStatement *select,
-                       char *error, size_t error_size) {
+                       Result *result, char *error, size_t error_size) {
     // Check every name before reading any row, so a bad query fails
-    // before any work is done or anything is printed.
+    // before any work is done.
     ColumnList columns;
     Filter filter;
     const Filter *where;
@@ -904,15 +842,18 @@ static int select_rows(const Table *table, const SelectStatement *select,
         return 0;
     }
 
-    print_sorted_rows(table, select, &columns, order_column, &matched);
+    sort_and_limit(select, order_column, &matched);
+
+    int ok = rows_result(table, &columns, &matched, result,
+                         error, error_size);
     free(matched.rows);
-    return 1;
+    return ok;
 }
 
 // SELECT of aggregates, e.g. SELECT COUNT(*), MAX(age) FROM people.
 static int select_aggregates(const Table *table,
                              const SelectStatement *select,
-                             char *error, size_t error_size) {
+                             Result *result, char *error, size_t error_size) {
     ColumnList columns;  // The column each aggregate reads.
     Filter filter;
     const Filter *where;
@@ -934,13 +875,14 @@ static int select_aggregates(const Table *table,
         return 0;
     }
 
-    int ok = print_aggregates(select, &columns, &matched, error, error_size);
+    int ok = aggregate_result(table, select, &columns, &matched, result,
+                              error, error_size);
     free(matched.rows);
     return ok;
 }
 
 static int execute_select(Database *db, const Statement *stmt,
-                          char *error, size_t error_size) {
+                          Result *result, char *error, size_t error_size) {
     const SelectStatement *select = &stmt->as.select;
     const Table *table = find_table(db, stmt->table_name, error, error_size);
 
@@ -949,12 +891,13 @@ static int execute_select(Database *db, const Statement *stmt,
     }
 
     return select->has_aggregates
-               ? select_aggregates(table, select, error, error_size)
-               : select_rows(table, select, error, error_size);
+               ? select_aggregates(table, select, result,
+                                   error, error_size)
+               : select_rows(table, select, result, error, error_size);
 }
 
 static int execute_delete(Database *db, const Statement *stmt,
-                          char *error, size_t error_size) {
+                          Result *result, char *error, size_t error_size) {
     const DeleteStatement *delete = &stmt->as.delete;
     Table *table = find_table(db, stmt->table_name, error, error_size);
 
@@ -983,8 +926,7 @@ static int execute_delete(Database *db, const Statement *stmt,
         table_delete_row(table, matched.positions[i - 1]);
     }
 
-    printf("(%zu %s deleted)\n", matched.count,
-           matched.count == 1 ? "row" : "rows");
+    result->changed = matched.count;
     free(matched.positions);
     return 1;
 }
@@ -1152,7 +1094,7 @@ static int resolve_changes(const Table *table, const UpdateStatement *update,
 }
 
 static int execute_update(Database *db, const Statement *stmt,
-                          char *error, size_t error_size) {
+                          Result *result, char *error, size_t error_size) {
     const UpdateStatement *update = &stmt->as.update;
     Table *table = find_table(db, stmt->table_name, error, error_size);
 
@@ -1203,7 +1145,7 @@ static int execute_update(Database *db, const Statement *stmt,
         updated++;
     }
 
-    printf("(%zu %s updated)\n", updated, updated == 1 ? "row" : "rows");
+    result->changed = updated;
     free(matched.positions);
     return 1;
 }
@@ -1220,22 +1162,37 @@ static int execute_drop(Database *db, const Statement *stmt,
     return 1;
 }
 
-int execute(Database *db, const Statement *stmt,
-            char *error, size_t error_size) {
+// Runs stmt, filling result, which execute has checked is empty.
+static int execute_statement(Database *db, const Statement *stmt,
+                             Result *result, char *error, size_t error_size) {
     switch (stmt->type) {
         case STMT_CREATE:
             return execute_create(db, stmt, error, error_size);
         case STMT_INSERT:
-            return execute_insert(db, stmt, error, error_size);
+            return execute_insert(db, stmt, result, error, error_size);
         case STMT_SELECT:
-            return execute_select(db, stmt, error, error_size);
+            return execute_select(db, stmt, result, error, error_size);
         case STMT_DELETE:
-            return execute_delete(db, stmt, error, error_size);
+            return execute_delete(db, stmt, result, error, error_size);
         case STMT_UPDATE:
-            return execute_update(db, stmt, error, error_size);
+            return execute_update(db, stmt, result, error, error_size);
         case STMT_DROP:
             return execute_drop(db, stmt, error, error_size);
     }
 
     return fail(error, error_size, "unknown statement type");
+}
+
+int execute(Database *db, const Statement *stmt, Result *result,
+            char *error, size_t error_size) {
+    assert(result->column_count == 0 && result->row_count == 0 &&
+           result->changed == 0);
+
+    // A SELECT can fail partway through filling result, e.g. running out
+    // of memory, so empty it here rather than on every error path.
+    if (!execute_statement(db, stmt, result, error, error_size)) {
+        result_free(result);
+        return 0;
+    }
+    return 1;
 }

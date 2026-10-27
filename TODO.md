@@ -20,11 +20,13 @@ Done:
 - [x] Primary keys, on one column or several, with a hash index that
       `WHERE id = 5` uses instead of reading every row (file format
       version 4)
+- [x] Results as data: `execute` fills a `Result` (column names and
+      types, then rows of `Value`s) and the REPL prints it
 
 Next, roughly in order, towards a toy online shop (see "Goal" below):
 
-- [ ] Return results as data rather than printing them, so other
-      programs can use TinySQL as a library
+- [ ] A library entry point, so other programs can use TinySQL as a
+      library
 - [ ] `''` inside a string for a quote, as in `'Men''s Shoes'`
 - [ ] `UNIQUE`, for logging in by email; see "Keys and constraints"
       below
@@ -71,11 +73,13 @@ sorted by price with `LIMIT`, and a basket as `cart_items` with
 
 Why each item in the list is needed:
 
-- **Results as data.** `execute` prints with `printf`, so only the REPL
-  can use it. Instead it should fill a result (column names, then rows
-  of `Value`s) for the REPL to print, as `select_rows` fills rows for
-  `print_rows`. The server in the parent folder can then link
-  TinySQL in as a library, as programs do with SQLite.
+- **A library entry point.** `execute` now fills a `Result` instead
+  of printing, but a caller still has to tokenise, parse, execute and
+  save after a change itself, as `run_statement` in `main.c` does. One
+  function that does all of that, a public `tinysql.h` and a
+  `libtinysql.a` built without `main.c` would let the server in the
+  parent folder link TinySQL in as a library, as programs do with
+  SQLite.
 - **`''` in strings.** The tokeniser ends a string at the first `'`, so
   `Men's Shoes` can't be stored.
 - **`UNIQUE`.** Two accounts mustn't share an email, and logging in
