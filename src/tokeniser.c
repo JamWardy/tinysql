@@ -51,6 +51,8 @@ const char *token_type_name(TokenType type) {
         case TOKEN_NULL:           return "NULL";
         case TOKEN_INT:            return "INT";
         case TOKEN_TEXT:           return "TEXT";
+        case TOKEN_PRIMARY:        return "PRIMARY";
+        case TOKEN_KEY:            return "KEY";
         case TOKEN_EOF:            return "EOF";
     }
     return "UNKNOWN";
@@ -90,6 +92,8 @@ static const Keyword keywords[] = {
     { "NULL",   TOKEN_NULL },
     { "INT",    TOKEN_INT },
     { "TEXT",   TOKEN_TEXT },
+    { "PRIMARY", TOKEN_PRIMARY },
+    { "KEY",    TOKEN_KEY },
 };
 
 // Compares a word of the given length against an upper-case keyword,

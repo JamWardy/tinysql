@@ -91,7 +91,7 @@ you. The codes we use:
 | `strlen(s)` | Counts the characters before the `'\0'`. | `executor.c`, `input.c`, `persist.c`, `table.c`, `text.c` |
 | `strcmp(a, b)` | Compares two strings: 0 if equal, negative if `a` sorts first, positive if `b` does. Always compare the result with 0; `if (strcmp(a, b))` means "if *different*". | `executor.c`, `commands.c`, `persist.c`, `table.c` |
 | `strncmp(a, b, n)` | `strcmp` on at most the first `n` characters. | `tokeniser.c`, for two-character operators such as `<=` |
-| `memcpy(dest, src, n)` | Copies `n` bytes. Doesn't care about `'\0'`, so it works on any data. `dest` and `src` mustn't overlap. | `text.c`, `table.c`, `persist.c`, `input.c` |
+| `memcpy(dest, src, n)` | Copies `n` bytes. Doesn't care about `'\0'`, so it works on any data. `dest` and `src` mustn't overlap. | `text.c`, `table.c`, `persist.c`, `input.c`, `executor.c` |
 | `memmove(dest, src, n)` | `memcpy` that's safe when they overlap. Used to shift array elements down one place after a removal. | `table.c` |
 | `memset(p, 0, n)` | Sets `n` bytes to zero, e.g. to clear a struct. | `table.c`, `persist.c` |
 | `memcmp(a, b, n)` | `strcmp` for raw bytes: compares exactly `n` bytes, ignoring `'\0'`. | `persist.c`, to check a file starts with `TSQL` |
@@ -103,7 +103,7 @@ you. The codes we use:
 | Function | What it does | Used in |
 |---|---|---|
 | `malloc(n)` | Allocates `n` bytes on the heap. Returns `NULL` if memory ran out. The bytes start with whatever was there before. | `executor.c`, `persist.c`, `table.c` |
-| `calloc(count, size)` | Allocates room for `count` items of `size` bytes, all set to zero. | `table.c`, `index.c` |
+| `calloc(count, size)` | Allocates room for `count` items of `size` bytes, all set to zero. | `table.c`, `index.c`, `executor.c` |
 | `realloc(p, n)` | Resizes an allocation. It may move the data, so it returns the new address, and on failure it returns `NULL` but leaves `p` as it was. That's why the result goes into a new variable before replacing the old pointer. | `table.c` |
 | `free(p)` | Gives an allocation back. Using `p` afterwards is a bug. `free(NULL)` does nothing. | `executor.c`, `index.c`, `persist.c`, `table.c` |
 | `strtoll(text, end, base)` | Converts text to a `long long`. On overflow it returns the largest value and sets `errno` to `ERANGE`. | `parser.c` |

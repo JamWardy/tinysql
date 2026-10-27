@@ -44,6 +44,38 @@ static int check_value(const Column *column, DataType given,
     return check_type(column, given, "value", error, error_size);
 }
 
+// Fills out with the position of each PRIMARY KEY column, checking that
+// each is one of the new table's columns, and only named once.
+static int resolve_primary_key(const CreateStatement *create, ColumnList *out,
+                               char *error, size_t error_size) {
+    out->count = (size_t)create->primary_key_count;
+
+    for (size_t i = 0; i < out->count; i++) {
+        const char *name = create->primary_key[i];
+        int found = 0;
+
+        for (int c = 0; c < create->column_count && !found; c++) {
+            if (strcmp(create->columns[c].name, name) == 0) {
+                out->index[i] = (size_t)c;
+                found = 1;
+            }
+        }
+        if (!found) {
+            return fail(error, error_size,
+                        "no such column '%s' in PRIMARY KEY", name);
+        }
+
+        for (size_t j = 0; j < i; j++) {
+            if (out->index[j] == out->index[i]) {
+                return fail(error, error_size,
+                            "column '%s' is in the PRIMARY KEY twice", name);
+            }
+        }
+    }
+
+    return 1;
+}
+
 static int execute_create(Database *db, const Statement *stmt,
                           char *error, size_t error_size) {
     const CreateStatement *create = &stmt->as.create;
@@ -63,12 +95,70 @@ static int execute_create(Database *db, const Statement *stmt,
         }
     }
 
-    if (!database_create_table(db, stmt->table_name, create->columns,
-                               (size_t)create->column_count)) {
+    ColumnList primary_key;
+
+    if (create->has_primary_key &&
+        !resolve_primary_key(create, &primary_key, error, error_size)) {
+        return 0;
+    }
+
+    Table *table = database_create_table(db, stmt->table_name,
+                                         create->columns,
+                                         (size_t)create->column_count);
+    if (!table) {
+        return fail(error, error_size, "out of memory");
+    }
+
+    // Undo the half-made table, so a failure leaves no trace.
+    if (create->has_primary_key &&
+        !table_add_constraint(table, CONSTRAINT_PRIMARY_KEY, &primary_key)) {
+        database_drop_table(db, table);
         return fail(error, error_size, "out of memory");
     }
 
     return 1;
+}
+
+static const char *constraint_name(ConstraintKind kind) {
+    switch (kind) {
+        case CONSTRAINT_PRIMARY_KEY: return "primary key";
+    }
+    return "key";
+}
+
+// Fails with the message for a second row with values' key, e.g.
+// "duplicate primary key in table 'users': id = 5". values is laid out
+// like a row.
+static int fail_duplicate(const Table *table, const Constraint *constraint,
+                          const Value *values, char *error,
+                          size_t error_size) {
+    const ColumnList *key = &constraint->columns;
+    char text[256];  // Cut short if it's long; it's only for the message.
+    size_t length = 0;
+
+    text[0] = '\0';
+    for (size_t i = 0; i < key->count && length < sizeof(text); i++) {
+        const Column *column = &table->columns[key->index[i]];
+        const Value *value = &values[key->index[i]];
+        const char *separator = i > 0 ? ", " : "";
+        int written;
+
+        if (value->type == TYPE_INT) {
+            written = snprintf(text + length, sizeof(text) - length,
+                               "%s%s = %lld", separator, column->name,
+                               value->as.integer);
+        } else {
+            written = snprintf(text + length, sizeof(text) - length,
+                               "%s%s = '%s'", separator, column->name,
+                               value->as.text);
+        }
+        // snprintf returns the length it wanted, which may not have fit;
+        // then length passes the end and the loop stops.
+        length += written > 0 ? (size_t)written : 0;
+    }
+
+    return fail(error, error_size, "duplicate %s in table '%s': %s",
+                constraint_name(constraint->kind), table->name, text);
 }
 
 // The Value to pass to the table for lit. Its text points into lit, so
@@ -114,6 +204,17 @@ static int execute_insert(Database *db, const Statement *stmt,
         values[i] = literal_to_value(lit);
     }
 
+    // Found through each key's index, so this doesn't read every row.
+    for (size_t i = 0; i < table->constraint_count; i++) {
+        const Constraint *constraint = &table->constraints[i];
+        size_t other;
+
+        if (table_find_key(table, constraint, values, &other)) {
+            return fail_duplicate(table, constraint, values,
+                                  error, error_size);
+        }
+    }
+
     if (!table_append_row(table, values)) {
         return fail(error, error_size, "out of memory");
     }
@@ -127,13 +228,6 @@ typedef struct {
     size_t columns[MAX_CONDITIONS];  // Per COND_COMPARE node, its column.
     int root;
 } Filter;
-
-// Table columns a query reads, by position in each row: the selected
-// columns, or the column each aggregate reads.
-typedef struct {
-    size_t index[MAX_COLUMNS];
-    size_t count;
-} ColumnList;
 
 // The rows a query matched. These are pointers into the table, not
 // copies, so they're valid only until the table next changes. Whoever
@@ -627,24 +721,57 @@ static int resolve_order_by(const Table *table,
                        error, error_size);
 }
 
+// Positions of rows in a table, in ascending order. Valid only until
+// the table next changes. Whoever fills one frees positions when done.
+typedef struct {
+    size_t *positions;
+    size_t count;
+} PositionList;
+
+// Fills out with the positions of the rows filter matches, in table
+// order.
+static int collect_positions(const Table *table, const Filter *filter,
+                             PositionList *out,
+                             char *error, size_t error_size) {
+    out->positions = malloc(table->row_count * sizeof(*out->positions));
+    out->count = 0;
+
+    // malloc(0) may return NULL, which isn't a failure.
+    if (!out->positions && table->row_count > 0) {
+        return fail(error, error_size, "out of memory");
+    }
+
+    for (size_t r = 0; r < table->row_count; r++) {
+        if (row_matches(&table->rows[r], filter)) {
+            out->positions[out->count++] = r;
+        }
+    }
+
+    return 1;
+}
+
 // Fills out with the rows filter matches, in table order. out->rows is
 // a new array, which the caller frees.
 static int collect_rows(const Table *table, const Filter *filter,
                         RowList *out, char *error, size_t error_size) {
-    out->rows = malloc(table->row_count * sizeof(*out->rows));
+    PositionList matched;
 
-    // malloc(0) may return NULL, which isn't a failure.
-    if (!out->rows && table->row_count > 0) {
+    if (!collect_positions(table, filter, &matched, error, error_size)) {
+        return 0;
+    }
+
+    out->rows = malloc(matched.count * sizeof(*out->rows));
+    if (!out->rows && matched.count > 0) {
+        free(matched.positions);
         return fail(error, error_size, "out of memory");
     }
 
-    out->count = 0;
-    for (size_t r = 0; r < table->row_count; r++) {
-        if (row_matches(&table->rows[r], filter)) {
-            out->rows[out->count++] = &table->rows[r];
-        }
+    for (size_t i = 0; i < matched.count; i++) {
+        out->rows[i] = &table->rows[matched.positions[i]];
     }
+    out->count = matched.count;
 
+    free(matched.positions);
     return 1;
 }
 
@@ -768,38 +895,159 @@ static int execute_delete(Database *db, const Statement *stmt,
         return 0;
     }
 
-    size_t deleted = 0;
-    size_t r = 0;
+    PositionList matched;
 
-    // Only move on when the row is kept: deleting shifts the next row
-    // into position r.
-    while (r < table->row_count) {
-        if (row_matches(&table->rows[r], where)) {
-            table_delete_row(table, r);
-            deleted++;
-        } else {
-            r++;
-        }
-    }
-
-    printf("(%zu %s deleted)\n", deleted, deleted == 1 ? "row" : "rows");
-    return 1;
-}
-
-static int execute_update(Database *db, const Statement *stmt,
-                          char *error, size_t error_size) {
-    const UpdateStatement *update = &stmt->as.update;
-    Table *table = find_table(db, stmt->table_name, error, error_size);
-
-    if (!table) {
+    if (!collect_positions(table, where, &matched, error, error_size)) {
         return 0;
     }
 
-    // Check every assignment and the WHERE before changing any row.
-    size_t columns[MAX_COLUMNS];
-    Value values[MAX_COLUMNS];
+    // From the last, so deleting a row doesn't move the ones still to go.
+    for (size_t i = matched.count; i > 0; i--) {
+        table_delete_row(table, matched.positions[i - 1]);
+    }
 
-    for (int i = 0; i < update->assignment_count; i++) {
+    printf("(%zu %s deleted)\n", matched.count,
+           matched.count == 1 ? "row" : "rows");
+    free(matched.positions);
+    return 1;
+}
+
+// The new value UPDATE gives each column it sets: values[i] goes in
+// column columns.index[i].
+typedef struct {
+    ColumnList columns;
+    Value values[MAX_COLUMNS];
+} Changes;
+
+// Fills after with row r's values as they'll be after the UPDATE: with
+// changes made if updating[r] is set, otherwise as they are. Text points
+// into the row or the statement, so after is only for reading straight
+// away.
+static void values_after_update(const Table *table, size_t r,
+                                const unsigned char *updating,
+                                const Changes *changes, Value *after) {
+    const Row *row = &table->rows[r];
+
+    memcpy(after, row->values, row->count * sizeof(*after));
+
+    if (updating[r]) {
+        for (size_t i = 0; i < changes->columns.count; i++) {
+            after[changes->columns.index[i]] = changes->values[i];
+        }
+    }
+}
+
+// What check_key_after_update is looking for, passed through index_find.
+typedef struct {
+    const Table *table;
+    const unsigned char *updating;
+    const Changes *changes;
+    const ColumnList *key;
+    const Value *values;  // The key being looked for, laid out like a row.
+} UpdatedKeySearch;
+
+static int updated_row_has_key(size_t row, const void *context) {
+    const UpdatedKeySearch *search = context;
+    Value after[MAX_COLUMNS];
+
+    values_after_update(search->table, row, search->updating,
+                        search->changes, after);
+    return key_equal(search->key, after, search->values);
+}
+
+// Checks that constraint's key would still be unique after the UPDATE,
+// by putting every row's new key in a new index, one by one, and failing
+// at the first that's there already. This reads every row, but only
+// runs when an UPDATE sets a key column, which is rare.
+//
+// Checking only the updated rows against the table's index isn't
+// enough: two updated rows can clash with each other.
+static int check_key_after_update(const Table *table,
+                                  const Constraint *constraint,
+                                  const unsigned char *updating,
+                                  const Changes *changes,
+                                  char *error, size_t error_size) {
+    Index seen;
+
+    index_init(&seen);
+    if (!index_reserve(&seen, table->row_count)) {
+        return fail(error, error_size, "out of memory");
+    }
+
+    int ok = 1;
+
+    for (size_t r = 0; r < table->row_count && ok; r++) {
+        Value after[MAX_COLUMNS];
+        values_after_update(table, r, updating, changes, after);
+
+        uint64_t hash = key_hash(&constraint->columns, after);
+        UpdatedKeySearch search = { table, updating, changes,
+                                    &constraint->columns, after };
+        size_t other;
+
+        if (index_find(&seen, hash, updated_row_has_key, &search, &other)) {
+            ok = fail_duplicate(table, constraint, after, error, error_size);
+        } else {
+            index_insert(&seen, hash, r);
+        }
+    }
+
+    index_free(&seen);
+    return ok;
+}
+
+// Checks that every key would still be unique after the UPDATE changes
+// the rows in matched.
+static int check_keys_after_update(const Table *table,
+                                   const PositionList *matched,
+                                   const Changes *changes,
+                                   char *error, size_t error_size) {
+    unsigned char *updating = NULL;  // Per row, 1 if it's being updated.
+    int ok = 1;
+
+    for (size_t c = 0; c < table->constraint_count && ok; c++) {
+        const Constraint *constraint = &table->constraints[c];
+        int sets_key = 0;
+
+        for (size_t i = 0; i < changes->columns.count; i++) {
+            if (column_list_has(&constraint->columns,
+                                changes->columns.index[i])) {
+                sets_key = 1;
+            }
+        }
+
+        // A key the UPDATE doesn't set, or sets in no rows, stays
+        // unique.
+        if (!sets_key || matched->count == 0) {
+            continue;
+        }
+
+        if (!updating) {
+            updating = calloc(table->row_count, 1);
+            if (!updating) {
+                return fail(error, error_size, "out of memory");
+            }
+            for (size_t i = 0; i < matched->count; i++) {
+                updating[matched->positions[i]] = 1;
+            }
+        }
+
+        ok = check_key_after_update(table, constraint, updating, changes,
+                                    error, error_size);
+    }
+
+    free(updating);
+    return ok;
+}
+
+// Fills out with the column and new value of each of update's
+// assignments, checking each column exists, is set at most once, and can
+// take its value.
+static int resolve_changes(const Table *table, const UpdateStatement *update,
+                           Changes *out, char *error, size_t error_size) {
+    out->columns.count = (size_t)update->assignment_count;
+
+    for (size_t i = 0; i < out->columns.count; i++) {
         const Assignment *assign = &update->assignments[i];
         size_t index;
 
@@ -812,38 +1060,65 @@ static int execute_update(Database *db, const Statement *stmt,
             return 0;
         }
 
-        for (int j = 0; j < i; j++) {
-            if (columns[j] == index) {
+        for (size_t j = 0; j < i; j++) {
+            if (out->columns.index[j] == index) {
                 return fail(error, error_size, "column '%s' is set twice",
                             assign->column);
             }
         }
 
-        columns[i] = index;
-        values[i] = literal_to_value(&assign->value);
+        out->columns.index[i] = index;
+        out->values[i] = literal_to_value(&assign->value);
     }
 
+    return 1;
+}
+
+static int execute_update(Database *db, const Statement *stmt,
+                          char *error, size_t error_size) {
+    const UpdateStatement *update = &stmt->as.update;
+    Table *table = find_table(db, stmt->table_name, error, error_size);
+
+    if (!table) {
+        return 0;
+    }
+
+    // Check every assignment, the WHERE and the keys before changing any
+    // row.
+    Changes changes;
     Filter filter;
     const Filter *where;
 
-    if (!resolve_where(table, update->has_where, &update->where, &filter,
+    if (!resolve_changes(table, update, &changes, error, error_size) ||
+        !resolve_where(table, update->has_where, &update->where, &filter,
                        &where, error, error_size)) {
+        return 0;
+    }
+
+    // Every row is tested before any changes, so a change to one row
+    // can't affect the test on another.
+    PositionList matched;
+
+    if (!collect_positions(table, where, &matched, error, error_size)) {
+        return 0;
+    }
+
+    if (!check_keys_after_update(table, &matched, &changes,
+                                 error, error_size)) {
+        free(matched.positions);
         return 0;
     }
 
     size_t updated = 0;
 
-    for (size_t r = 0; r < table->row_count; r++) {
-        // Each row is tested before any of its values change, and a
-        // change to one row can't affect the test on another.
-        if (!row_matches(&table->rows[r], where)) {
-            continue;
-        }
-
-        for (int i = 0; i < update->assignment_count; i++) {
+    for (size_t i = 0; i < matched.count; i++) {
+        for (size_t c = 0; c < changes.columns.count; c++) {
             // Only text needs memory. Running out partway leaves the
             // changes made so far in place; there's no undo.
-            if (!table_set_value(table, r, columns[i], &values[i])) {
+            if (!table_set_value(table, matched.positions[i],
+                                 changes.columns.index[c],
+                                 &changes.values[c])) {
+                free(matched.positions);
                 return fail(error, error_size,
                             "out of memory after updating %zu rows", updated);
             }
@@ -852,6 +1127,7 @@ static int execute_update(Database *db, const Statement *stmt,
     }
 
     printf("(%zu %s updated)\n", updated, updated == 1 ? "row" : "rows");
+    free(matched.positions);
     return 1;
 }
 

@@ -45,16 +45,41 @@ static void print_tables(const Database *db) {
 }
 
 // Prints the CREATE TABLE statement that would make an empty copy of
-// table, e.g. CREATE TABLE users (id INT NOT NULL, name TEXT);
+// table, e.g. CREATE TABLE users (id INT PRIMARY KEY, name TEXT NOT NULL);
+// A one-column key goes on its column, a longer one after the columns.
 static void print_create(const Table *table) {
+    const ColumnList *key = NULL;
+
+    for (size_t i = 0; i < table->constraint_count; i++) {
+        if (table->constraints[i].kind == CONSTRAINT_PRIMARY_KEY) {
+            key = &table->constraints[i].columns;
+        }
+    }
+
     printf("CREATE TABLE %s (", table->name);
 
     for (size_t i = 0; i < table->column_count; i++) {
         const Column *column = &table->columns[i];
+        int in_key = key && column_list_has(key, i);
 
-        printf("%s%s %s%s", i > 0 ? ", " : "", column->name,
-               data_type_name(column->type),
-               column->not_null ? " NOT NULL" : "");
+        printf("%s%s %s", i > 0 ? ", " : "", column->name,
+               data_type_name(column->type));
+
+        // PRIMARY KEY makes its columns NOT NULL, so that isn't repeated.
+        if (in_key && key->count == 1) {
+            printf(" PRIMARY KEY");
+        } else if (column->not_null && !in_key) {
+            printf(" NOT NULL");
+        }
+    }
+
+    if (key && key->count > 1) {
+        printf(", PRIMARY KEY (");
+        for (size_t i = 0; i < key->count; i++) {
+            printf("%s%s", i > 0 ? ", " : "",
+                   table->columns[key->index[i]].name);
+        }
+        putchar(')');
     }
 
     puts(");");

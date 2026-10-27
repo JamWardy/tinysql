@@ -50,6 +50,8 @@ typedef enum {
     TOKEN_NULL,
     TOKEN_INT,
     TOKEN_TEXT,
+    TOKEN_PRIMARY,
+    TOKEN_KEY,
     TOKEN_EOF
 } TokenType;
 

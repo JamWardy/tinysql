@@ -21,10 +21,13 @@ statement     = ( create_stmt | insert_stmt | select_stmt | delete_stmt
                 | update_stmt | drop_stmt ) SEMICOLON EOF
 
 create_stmt   = CREATE TABLE IDENTIFIER
-                LPAREN column_def { COMMA column_def } RPAREN
+                LPAREN table_element { COMMA table_element } RPAREN
+table_element = column_def | table_key
 
-column_def    = IDENTIFIER column_type [ NOT NULL ]
+column_def    = IDENTIFIER column_type { column_constraint }
 column_type   = INT | TEXT
+column_constraint = NOT NULL | PRIMARY KEY
+table_key     = PRIMARY KEY LPAREN IDENTIFIER { COMMA IDENTIFIER } RPAREN
 
 insert_stmt   = INSERT INTO IDENTIFIER
                 VALUES LPAREN value { COMMA value } RPAREN
@@ -65,6 +68,9 @@ Accepted:
 ```sql
 CREATE TABLE users (id INT, name TEXT, age INT);
 CREATE TABLE orders (id INT NOT NULL, item TEXT NOT NULL, note TEXT);
+CREATE TABLE products (id INT PRIMARY KEY, name TEXT NOT NULL);
+CREATE TABLE order_items (order_id INT, product_id INT, quantity INT,
+                          PRIMARY KEY (order_id, product_id));
 INSERT INTO users VALUES (1, 'Alice', 25);
 INSERT INTO users VALUES (-3, 'Eve', 30);
 INSERT INTO users VALUES (2, NULL, NULL);    -- any column can be NULL
@@ -94,6 +100,9 @@ Rejected:
 CREATE TABLE users ();             -- needs at least one column
 CREATE TABLE users (id INTEGER);   -- type must be INT or TEXT
 CREATE TABLE users (id NOT NULL);  -- NOT NULL goes after the type
+CREATE TABLE t (a INT PRIMARY KEY, b INT PRIMARY KEY);  -- one key a table
+CREATE TABLE t (a INT, PRIMARY KEY a);   -- key columns go in ( )
+CREATE TABLE t (PRIMARY KEY (a));        -- needs at least one column
 INSERT INTO users VALUES (1, 2,);  -- trailing comma
 INSERT INTO users VALUES (--1);    -- only one '-'
 INSERT INTO users VALUES (-'a');   -- '-' only before a number
@@ -125,10 +134,12 @@ depend on what tables exist:
 
 - the table exists (or, for `CREATE`, doesn't already exist)
 - column names are unique within a `CREATE TABLE`
+- each `PRIMARY KEY` column is one of the table's columns, named once
 - `INSERT` has the right number of values, of the right types (`NULL`
   fits any column that isn't `NOT NULL`)
 - `UPDATE` sets columns that exist, each at most once, to values of the
   right types, or to `NULL` if the column isn't `NOT NULL`
+- no two rows have the same primary key, after an `INSERT` or `UPDATE`
 - `SELECT` names columns that exist, including the `ORDER BY` column
   and the columns inside aggregates
 - `SUM` is given an `INT` column
@@ -225,3 +236,32 @@ the start of a statement.
 | `.schema`        | prints the `CREATE TABLE` statement for each table |
 | `.schema users`  | prints it for one table                            |
 | `.exit`          | quits                                              |
+
+## Primary keys
+
+A primary key is one or more columns whose values, together, are
+different in every row, so they pick out exactly one row. Write it on
+its column, or after the columns when it spans several:
+
+```sql
+CREATE TABLE users (id INT PRIMARY KEY, name TEXT);
+CREATE TABLE order_items (order_id INT, product_id INT, quantity INT,
+                          PRIMARY KEY (order_id, product_id));
+```
+
+In `order_items`, each pair is unique: `(1, 10)` and `(1, 11)` can both
+be there, but not two `(1, 10)` rows. A table has at most one primary
+key. Its columns are `NOT NULL`, since `NULL` is no value and so can't
+pick out a row.
+
+An `INSERT` or `UPDATE` that would give two rows the same key fails,
+with nothing changed:
+
+```sql
+INSERT INTO users VALUES (1, 'Ann');
+INSERT INTO users VALUES (1, 'Bob');   -- duplicate primary key ... id = 1
+UPDATE users SET id = 5;               -- fails if users has 2+ rows
+```
+
+`PRIMARY` and `KEY` are keywords, so they can't be used as table or
+column names.

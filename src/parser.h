@@ -31,6 +31,12 @@ typedef struct {
 typedef struct {
     ColumnDef columns[MAX_COLUMNS];
     int column_count;
+
+    // `id INT PRIMARY KEY` or `PRIMARY KEY (order_id, product_id)`; the
+    // executor checks the names are columns.
+    int has_primary_key;  // 0: no key, and primary_key is unused.
+    char primary_key[MAX_COLUMNS][MAX_TOKEN_LENGTH];  // In key order.
+    int primary_key_count;
 } CreateStatement;
 
 typedef struct {

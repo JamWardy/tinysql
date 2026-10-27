@@ -36,6 +36,11 @@ static void table_free(Table *table) {
         free(table->rows[i].values);
     }
 
+    for (size_t i = 0; i < table->constraint_count; i++) {
+        index_free(&table->constraints[i].rows_by_key);
+    }
+    free(table->constraints);
+
     free(table->rows);
     free_columns(table->columns, table->column_count);
     free(table->name);
@@ -135,7 +140,136 @@ int table_find_column(const Table *table, const char *name, size_t *index) {
     return 0;
 }
 
+int table_add_constraint(Table *table, ConstraintKind kind,
+                         const ColumnList *columns) {
+    assert(table->row_count == 0);
+    assert(columns->count > 0 && columns->count <= table->column_count);
+
+    Constraint *constraints = realloc(
+        table->constraints,
+        (table->constraint_count + 1) * sizeof(*constraints));
+    if (!constraints) {
+        return 0;
+    }
+    table->constraints = constraints;
+
+    Constraint *constraint = &constraints[table->constraint_count++];
+    constraint->kind = kind;
+    constraint->columns = *columns;
+    index_init(&constraint->rows_by_key);
+
+    switch (kind) {
+        case CONSTRAINT_PRIMARY_KEY:
+            // A key identifies its row, and NULL is no value, so it
+            // can't identify anything.
+            for (size_t i = 0; i < columns->count; i++) {
+                assert(columns->index[i] < table->column_count);
+                table->columns[columns->index[i]].not_null = 1;
+            }
+            break;
+    }
+    return 1;
+}
+
+int column_list_has(const ColumnList *list, size_t column) {
+    for (size_t i = 0; i < list->count; i++) {
+        if (list->index[i] == column) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+// FNV-1a, a simple hash that's good enough for an in-memory index: for
+// each byte, mix it in with XOR, then multiply to spread it through all
+// 64 bits. The constants are the published 64-bit ones.
+#define FNV_OFFSET 14695981039346656037ULL
+#define FNV_PRIME  1099511628211ULL
+
+static uint64_t hash_byte(uint64_t hash, unsigned char byte) {
+    return (hash ^ byte) * FNV_PRIME;
+}
+
+uint64_t key_hash(const ColumnList *key, const Value *values) {
+    uint64_t hash = FNV_OFFSET;
+
+    for (size_t i = 0; i < key->count; i++) {
+        const Value *value = &values[key->index[i]];
+
+        // A bug in the caller: the key's columns are NOT NULL.
+        assert(value->type != TYPE_NULL);
+
+        if (value->type == TYPE_INT) {
+            // Byte by byte from the value, not its memory, so the hash
+            // doesn't depend on the machine's byte order.
+            uint64_t n = (uint64_t)value->as.integer;
+            for (int b = 0; b < 8; b++) {
+                hash = hash_byte(hash, (unsigned char)(n >> (8 * b)));
+            }
+        } else {
+            for (const char *c = value->as.text; *c != '\0'; c++) {
+                hash = hash_byte(hash, (unsigned char)*c);
+            }
+            // End each text with a 0, so the key ('ab', 'c') doesn't
+            // hash the same as ('a', 'bc').
+            hash = hash_byte(hash, 0);
+        }
+    }
+
+    // Multiplying only carries upwards, so the low bits, which the
+    // index uses to pick a slot, have seen the least mixing. Folding
+    // the high half into the low half fixes that.
+    return hash ^ (hash >> 32);
+}
+
+int key_equal(const ColumnList *key, const Value *a, const Value *b) {
+    for (size_t i = 0; i < key->count; i++) {
+        const Value *x = &a[key->index[i]];
+        const Value *y = &b[key->index[i]];
+
+        assert(x->type == y->type && x->type != TYPE_NULL);
+
+        if (x->type == TYPE_INT ? x->as.integer != y->as.integer
+                                : strcmp(x->as.text, y->as.text) != 0) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+// What table_find_key is looking for, passed through index_find.
+typedef struct {
+    const Table *table;
+    const ColumnList *key;
+    const Value *values;
+} KeySearch;
+
+static int row_has_key(size_t row, const void *context) {
+    const KeySearch *search = context;
+
+    return key_equal(search->key, search->table->rows[row].values,
+                     search->values);
+}
+
+int table_find_key(const Table *table, const Constraint *constraint,
+                   const Value *values, size_t *row) {
+    KeySearch search = { table, &constraint->columns, values };
+
+    return index_find(&constraint->rows_by_key,
+                      key_hash(&constraint->columns, values),
+                      row_has_key, &search, row);
+}
+
 int table_append_row(Table *table, const Value *values) {
+    // Make room in every index first. A failure partway leaves some
+    // indexes bigger than needed, which is harmless.
+    for (size_t i = 0; i < table->constraint_count; i++) {
+        if (!index_reserve(&table->constraints[i].rows_by_key,
+                           table->row_count + 1)) {
+            return 0;
+        }
+    }
+
     if (table->row_count == table->row_capacity) {
         size_t capacity = table->row_capacity == 0
                               ? 8 : table->row_capacity * 2;
@@ -173,6 +307,13 @@ int table_append_row(Table *table, const Value *values) {
         }
     }
 
+    for (size_t i = 0; i < table->constraint_count; i++) {
+        Constraint *constraint = &table->constraints[i];
+
+        index_insert(&constraint->rows_by_key,
+                     key_hash(&constraint->columns, copy), table->row_count);
+    }
+
     Row *row = &table->rows[table->row_count++];
     row->values = copy;
     row->count = table->column_count;
@@ -195,12 +336,34 @@ int table_set_value(Table *table, size_t row, size_t column,
         }
     }
 
+    const Value *values = table->rows[row].values;
+
+    // The row is filed under its old key, which is about to change.
+    for (size_t i = 0; i < table->constraint_count; i++) {
+        Constraint *constraint = &table->constraints[i];
+
+        if (column_list_has(&constraint->columns, column)) {
+            index_remove(&constraint->rows_by_key,
+                         key_hash(&constraint->columns, values), row);
+        }
+    }
+
     // Free the old value only once the new one is ready, so a failure
     // leaves the old one in place. The old value may be NULL, which
     // values_free knows has no text to free.
     Value *slot = &table->rows[row].values[column];
     values_free(slot, 1);
     *slot = copy;
+
+    // Removing the row made room, so these can't fail.
+    for (size_t i = 0; i < table->constraint_count; i++) {
+        Constraint *constraint = &table->constraints[i];
+
+        if (column_list_has(&constraint->columns, column)) {
+            index_insert(&constraint->rows_by_key,
+                         key_hash(&constraint->columns, values), row);
+        }
+    }
     return 1;
 }
 
@@ -208,6 +371,18 @@ void table_delete_row(Table *table, size_t index) {
     assert(index < table->row_count);
 
     Row *row = &table->rows[index];
+
+    // Every later row moves down one place, so its position in each
+    // index does too. This reads every slot, so deleting a row is O(n),
+    // as the memmove below already is.
+    for (size_t i = 0; i < table->constraint_count; i++) {
+        Constraint *constraint = &table->constraints[i];
+
+        index_remove(&constraint->rows_by_key,
+                     key_hash(&constraint->columns, row->values), index);
+        index_shift_rows(&constraint->rows_by_key, index);
+    }
+
     values_free(row->values, row->count);
     free(row->values);
 

@@ -104,13 +104,49 @@ const char *literal_as_text(const Literal *lit) {
     return lit->as.text;
 }
 
-// column_def = IDENTIFIER column_type [ NOT NULL ]
-// column_type = INT | TEXT
-static int parse_column_def(Parser *p, ColumnDef *out) {
+// Records that create has a primary key, of which a table can have only
+// one. Its columns are added after.
+static int start_primary_key(Parser *p, CreateStatement *create) {
+    if (create->has_primary_key) {
+        return fail(p->error, sizeof(p->error),
+                    "a table can have only one PRIMARY KEY");
+    }
+
+    create->has_primary_key = 1;
+    create->primary_key_count = 0;
+    return 1;
+}
+
+static int add_primary_key_column(Parser *p, CreateStatement *create,
+                                  const char *name) {
+    if (create->primary_key_count == MAX_COLUMNS) {
+        return fail(p->error, sizeof(p->error),
+                    "too many PRIMARY KEY columns (max %d)", MAX_COLUMNS);
+    }
+
+    copy_text(create->primary_key[create->primary_key_count],
+              sizeof(create->primary_key[0]), name);
+    create->primary_key_count++;
+    return 1;
+}
+
+// Adds a column to create.
+//
+// column_def        = IDENTIFIER column_type { column_constraint }
+// column_type       = INT | TEXT
+// column_constraint = NOT NULL | PRIMARY KEY
+static int parse_column_def(Parser *p, CreateStatement *create) {
+    if (create->column_count == MAX_COLUMNS) {
+        return fail(p->error, sizeof(p->error),
+                    "too many columns (max %d)", MAX_COLUMNS);
+    }
+
+    ColumnDef *out = &create->columns[create->column_count];
     const Token *name = expect(p, TOKEN_IDENTIFIER, "column name");
     if (!name) {
         return 0;
     }
+    copy_text(out->name, sizeof(out->name), name->text);
 
     if (match(p, TOKEN_INT)) {
         out->type = TYPE_INT;
@@ -121,17 +157,52 @@ static int parse_column_def(Parser *p, ColumnDef *out) {
         return 0;
     }
 
-    out->not_null = match(p, TOKEN_NOT);
-    if (out->not_null && !expect(p, TOKEN_NULL, "NULL")) {
-        return 0;
+    out->not_null = 0;
+    while (1) {
+        if (match(p, TOKEN_NOT)) {
+            if (!expect(p, TOKEN_NULL, "NULL")) {
+                return 0;
+            }
+            out->not_null = 1;
+        } else if (match(p, TOKEN_PRIMARY)) {
+            if (!expect(p, TOKEN_KEY, "KEY") ||
+                !start_primary_key(p, create) ||
+                !add_primary_key_column(p, create, out->name)) {
+                return 0;
+            }
+        } else {
+            break;
+        }
     }
 
-    copy_text(out->name, sizeof(out->name), name->text);
+    create->column_count++;
     return 1;
 }
 
-// create_stmt = CREATE TABLE IDENTIFIER
-//               LPAREN column_def { COMMA column_def } RPAREN
+// A key over one or more columns, after the columns or between them.
+//
+// table_key = PRIMARY KEY LPAREN IDENTIFIER { COMMA IDENTIFIER } RPAREN
+static int parse_table_key(Parser *p, CreateStatement *create) {
+    if (!expect(p, TOKEN_PRIMARY, "PRIMARY") ||
+        !expect(p, TOKEN_KEY, "KEY") ||
+        !expect(p, TOKEN_LPAREN, "'('") ||
+        !start_primary_key(p, create)) {
+        return 0;
+    }
+
+    do {
+        const Token *column = expect(p, TOKEN_IDENTIFIER, "column name");
+        if (!column || !add_primary_key_column(p, create, column->text)) {
+            return 0;
+        }
+    } while (match(p, TOKEN_COMMA));
+
+    return expect(p, TOKEN_RPAREN, "',' or ')'") != NULL;
+}
+
+// create_stmt   = CREATE TABLE IDENTIFIER
+//                 LPAREN table_element { COMMA table_element } RPAREN
+// table_element = column_def | table_key
 static int parse_create(Parser *p, Statement *out) {
     if (!expect(p, TOKEN_CREATE, "CREATE") ||
         !expect(p, TOKEN_TABLE, "TABLE")) {
@@ -149,22 +220,25 @@ static int parse_create(Parser *p, Statement *out) {
 
     CreateStatement *create = &out->as.create;
     create->column_count = 0;
+    create->has_primary_key = 0;
 
     do {
-        if (create->column_count == MAX_COLUMNS) {
-            return fail(p->error, sizeof(p->error),
-                        "too many columns (max %d)", MAX_COLUMNS);
-        }
-
-        if (!parse_column_def(p, &create->columns[create->column_count])) {
+        int ok = peek(p)->type == TOKEN_PRIMARY
+                     ? parse_table_key(p, create)
+                     : parse_column_def(p, create);
+        if (!ok) {
             return 0;
         }
-
-        create->column_count++;
     } while (match(p, TOKEN_COMMA));
 
     if (!expect(p, TOKEN_RPAREN, "',' or ')'")) {
         return 0;
+    }
+
+    // Only possible as `CREATE TABLE t (PRIMARY KEY (id))`.
+    if (create->column_count == 0) {
+        return fail(p->error, sizeof(p->error),
+                    "a table needs at least one column");
     }
 
     out->type = STMT_CREATE;
