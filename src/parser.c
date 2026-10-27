@@ -5,6 +5,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "error.h"
+
 #define MAX_ERROR 256
 
 // The parser's working state while it reads one statement. It lives only
@@ -28,11 +30,11 @@ static void error_expected(Parser *p, const char *what) {
     const Token *token = peek(p);
 
     if (token->type == TOKEN_EOF) {
-        snprintf(p->error, sizeof(p->error),
-                 "expected %s but reached end of input", what);
+        fail(p->error, sizeof(p->error),
+             "expected %s but reached end of input", what);
     } else {
-        snprintf(p->error, sizeof(p->error),
-                 "expected %s but found '%s'", what, token->text);
+        fail(p->error, sizeof(p->error),
+             "expected %s but found '%s'", what, token->text);
     }
 }
 
@@ -137,9 +139,8 @@ static int parse_create(Parser *p, Statement *out) {
 
     do {
         if (create->column_count == MAX_COLUMNS) {
-            snprintf(p->error, sizeof(p->error),
-                     "too many columns (max %d)", MAX_COLUMNS);
-            return 0;
+            return fail(p->error, sizeof(p->error),
+                        "too many columns (max %d)", MAX_COLUMNS);
         }
 
         if (!parse_column_def(p, &create->columns[create->column_count])) {
@@ -177,9 +178,8 @@ static int parse_value(Parser *p, Literal *out) {
         long long n = strtoll(text, NULL, 10);
 
         if (errno == ERANGE) {
-            snprintf(p->error, sizeof(p->error),
-                     "number out of range: %s", text);
-            return 0;
+            return fail(p->error, sizeof(p->error),
+                        "number out of range: %s", text);
         }
 
         *out = literal_int(n);
@@ -218,9 +218,8 @@ static int parse_insert(Parser *p, Statement *out) {
 
     do {
         if (insert->value_count == MAX_COLUMNS) {
-            snprintf(p->error, sizeof(p->error),
-                     "too many values (max %d)", MAX_COLUMNS);
-            return 0;
+            return fail(p->error, sizeof(p->error),
+                        "too many values (max %d)", MAX_COLUMNS);
         }
 
         if (!parse_value(p, &insert->values[insert->value_count])) {
@@ -252,8 +251,8 @@ static int is_aggregate_start(const Parser *p) {
 }
 
 static void error_mixed(Parser *p) {
-    snprintf(p->error, sizeof(p->error),
-             "can't mix columns and aggregates (there's no GROUP BY)");
+    fail(p->error, sizeof(p->error),
+         "can't mix columns and aggregates (there's no GROUP BY)");
 }
 
 // aggregate = COUNT LPAREN STAR RPAREN
@@ -302,9 +301,8 @@ static int parse_aggregate(Parser *p, Aggregate *out) {
 static int parse_aggregate_list(Parser *p, SelectStatement *out) {
     do {
         if (out->aggregate_count == MAX_COLUMNS) {
-            snprintf(p->error, sizeof(p->error),
-                     "too many aggregates (max %d)", MAX_COLUMNS);
-            return 0;
+            return fail(p->error, sizeof(p->error),
+                        "too many aggregates (max %d)", MAX_COLUMNS);
         }
 
         if (!parse_aggregate(p, &out->aggregates[out->aggregate_count])) {
@@ -339,9 +337,8 @@ static int parse_select_list(Parser *p, SelectStatement *out) {
 
     do {
         if (out->column_count == MAX_COLUMNS) {
-            snprintf(p->error, sizeof(p->error),
-                     "too many columns (max %d)", MAX_COLUMNS);
-            return 0;
+            return fail(p->error, sizeof(p->error),
+                        "too many columns (max %d)", MAX_COLUMNS);
         }
 
         if (is_aggregate_start(p)) {
@@ -402,9 +399,9 @@ static int parse_comparison(Parser *p, Comparison *out) {
 static int new_condition(Parser *p, WhereClause *where,
                          ConditionType type, int *out) {
     if (where->condition_count == MAX_CONDITIONS) {
-        snprintf(p->error, sizeof(p->error),
-                 "WHERE is too complex (max %d conditions)", MAX_CONDITIONS);
-        return 0;
+        return fail(p->error, sizeof(p->error),
+                    "WHERE is too complex (max %d conditions)",
+                    MAX_CONDITIONS);
     }
 
     *out = where->condition_count++;
@@ -570,9 +567,8 @@ static int parse_limit(Parser *p, SelectStatement *select) {
     select->limit = strtoll(number->text, NULL, 10);
 
     if (errno == ERANGE) {
-        snprintf(p->error, sizeof(p->error),
-                 "number out of range: %s", number->text);
-        return 0;
+        return fail(p->error, sizeof(p->error),
+                    "number out of range: %s", number->text);
     }
 
     return 1;
@@ -693,9 +689,8 @@ static int parse_update(Parser *p, Statement *out) {
 
     do {
         if (update->assignment_count == MAX_COLUMNS) {
-            snprintf(p->error, sizeof(p->error),
-                     "too many assignments (max %d)", MAX_COLUMNS);
-            return 0;
+            return fail(p->error, sizeof(p->error),
+                        "too many assignments (max %d)", MAX_COLUMNS);
         }
 
         if (!parse_assignment(

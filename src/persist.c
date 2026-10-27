@@ -9,6 +9,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "error.h"
+
 // File layout. Integers are unsigned and little-endian, written a byte at
 // a time so the file is the same on every machine.
 //
@@ -83,16 +85,15 @@ int database_save(const Database *db, const char *path,
     char *temp_path = malloc(length + sizeof(".tmp"));
 
     if (!temp_path) {
-        snprintf(error, error_size, "out of memory");
-        return 0;
+        return fail(error, error_size, "out of memory");
     }
     memcpy(temp_path, path, length);
     memcpy(temp_path + length, ".tmp", sizeof(".tmp"));
 
     FILE *file = fopen(temp_path, "wb");
     if (!file) {
-        snprintf(error, error_size, "cannot create '%s': %s",
-                 temp_path, strerror(errno));
+        fail(error, error_size, "cannot create '%s': %s",
+             temp_path, strerror(errno));
         free(temp_path);
         return 0;
     }
@@ -110,15 +111,15 @@ int database_save(const Database *db, const char *path,
     failed |= fclose(file) != 0;
 
     if (failed) {
-        snprintf(error, error_size, "error writing '%s'", temp_path);
+        fail(error, error_size, "error writing '%s'", temp_path);
         remove(temp_path);
         free(temp_path);
         return 0;
     }
 
     if (rename(temp_path, path) != 0) {
-        snprintf(error, error_size, "cannot replace '%s': %s",
-                 path, strerror(errno));
+        fail(error, error_size, "cannot replace '%s': %s",
+             path, strerror(errno));
         remove(temp_path);
         free(temp_path);
         return 0;
@@ -139,8 +140,9 @@ typedef struct {
     size_t error_size;
 } Reader;
 
-// Records an error message and returns 0, so callers can `return fail(...)`.
-static int fail(Reader *r, const char *format, ...) {
+// Records an error message and returns 0, so callers can
+// `return read_fail(...)`.
+static int read_fail(Reader *r, const char *format, ...) {
     va_list args;
 
     va_start(args, format);
@@ -152,7 +154,7 @@ static int fail(Reader *r, const char *format, ...) {
 static int read_bytes(Reader *r, void *out, size_t count) {
     if (count > r->remaining ||
         fread(out, 1, count, r->file) != count) {
-        return fail(r, "file is truncated or unreadable");
+        return read_fail(r, "file is truncated or unreadable");
     }
 
     r->remaining -= count;
@@ -192,11 +194,11 @@ static int read_length(Reader *r, uint64_t max, size_t *out) {
         return 0;
     }
     if (length > r->remaining) {
-        return fail(r, "file is truncated or unreadable");
+        return read_fail(r, "file is truncated or unreadable");
     }
     if (length > max) {
-        return fail(r, "name too long (max %llu characters)",
-                    (unsigned long long)max);
+        return read_fail(r, "name too long (max %llu characters)",
+                         (unsigned long long)max);
     }
 
     *out = (size_t)length;
@@ -210,7 +212,7 @@ static int read_chars(Reader *r, char *out, size_t length) {
         return 0;
     }
     if (memchr(out, '\0', length)) {
-        return fail(r, "string contains a NUL byte");
+        return read_fail(r, "string contains a NUL byte");
     }
 
     out[length] = '\0';
@@ -226,7 +228,7 @@ static int read_name(Reader *r, char *out) {
         return 0;
     }
     if (length == 0) {
-        return fail(r, "empty name");
+        return read_fail(r, "empty name");
     }
 
     return read_chars(r, out, length);
@@ -242,7 +244,7 @@ static int read_text(Reader *r, char **out) {
 
     char *text = malloc(length + 1);
     if (!text) {
-        return fail(r, "out of memory");
+        return read_fail(r, "out of memory");
     }
 
     if (!read_chars(r, text, length)) {
@@ -289,7 +291,7 @@ static int read_row(Reader *r, Table *table) {
     int ok = table_append_row(table, values);
     free_texts(values, table->column_count);
 
-    return ok ? 1 : fail(r, "out of memory");
+    return ok ? 1 : read_fail(r, "out of memory");
 }
 
 static int read_table(Reader *r, Database *db) {
@@ -302,13 +304,14 @@ static int read_table(Reader *r, Database *db) {
     }
 
     if (database_find_table(db, name)) {
-        return fail(r, "table '%s' appears twice", name);
+        return read_fail(r, "table '%s' appears twice", name);
     }
 
     // The executor sizes its arrays by MAX_COLUMNS, so more would overflow.
     if (column_count == 0 || column_count > MAX_COLUMNS) {
-        return fail(r, "table '%s' has %llu columns (must be 1 to %d)",
-                    name, (unsigned long long)column_count, MAX_COLUMNS);
+        return read_fail(r,
+                         "table '%s' has %llu columns (must be 1 to %d)",
+                         name, (unsigned long long)column_count, MAX_COLUMNS);
     }
 
     for (size_t i = 0; i < column_count; i++) {
@@ -323,8 +326,9 @@ static int read_table(Reader *r, Database *db) {
         } else if (type == FILE_TYPE_TEXT) {
             columns[i].type = TYPE_TEXT;
         } else {
-            return fail(r, "table '%s' has an unknown column type %llu",
-                        name, (unsigned long long)type);
+            return read_fail(r,
+                             "table '%s' has an unknown column type %llu",
+                             name, (unsigned long long)type);
         }
 
         if (!read_name(r, columns[i].name)) {
@@ -333,8 +337,8 @@ static int read_table(Reader *r, Database *db) {
 
         for (size_t j = 0; j < i; j++) {
             if (strcmp(columns[i].name, columns[j].name) == 0) {
-                return fail(r, "table '%s' has duplicate column '%s'",
-                            name, columns[i].name);
+                return read_fail(r, "table '%s' has duplicate column '%s'",
+                                 name, columns[i].name);
             }
         }
     }
@@ -342,7 +346,7 @@ static int read_table(Reader *r, Database *db) {
     Table *table = database_create_table(db, name, columns,
                                          (size_t)column_count);
     if (!table) {
-        return fail(r, "out of memory");
+        return read_fail(r, "out of memory");
     }
 
     uint64_t row_count;
@@ -367,15 +371,15 @@ static int read_database(Reader *r, Database *db) {
 
     if (!read_bytes(r, magic, MAGIC_LENGTH) ||
         memcmp(magic, MAGIC, MAGIC_LENGTH) != 0) {
-        return fail(r, "not a TinySQL database file");
+        return read_fail(r, "not a TinySQL database file");
     }
 
     if (!read_uint(r, 4, &version)) {
         return 0;
     }
     if (version != FORMAT_VERSION) {
-        return fail(r, "unsupported file version %llu (expected %d)",
-                    (unsigned long long)version, FORMAT_VERSION);
+        return read_fail(r, "unsupported file version %llu (expected %d)",
+                         (unsigned long long)version, FORMAT_VERSION);
     }
 
     if (!read_uint(r, 4, &table_count)) {
@@ -389,7 +393,7 @@ static int read_database(Reader *r, Database *db) {
     }
 
     if (r->remaining != 0) {
-        return fail(r, "unexpected data at end of file");
+        return read_fail(r, "unexpected data at end of file");
     }
 
     return 1;
@@ -407,8 +411,7 @@ int database_load(Database *db, const char *path,
         if (errno == ENOENT) {
             return 1;
         }
-        snprintf(error, error_size, "%s", strerror(errno));
-        return 0;
+        return fail(error, error_size, "%s", strerror(errno));
     }
 
     Reader r = { file, 0, error, error_size };
@@ -421,7 +424,7 @@ int database_load(Database *db, const char *path,
         size = ftell(file);
     }
     if (size < 0 || fseek(file, 0, SEEK_SET) != 0) {
-        ok = fail(&r, "cannot read file size");
+        ok = read_fail(&r, "cannot read file size");
     } else {
         r.remaining = (uint64_t)size;
         ok = read_database(&r, db);

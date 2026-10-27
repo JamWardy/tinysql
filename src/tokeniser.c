@@ -1,8 +1,9 @@
 #include "tokeniser.h"
 
 #include <ctype.h>
-#include <stdio.h>
 #include <string.h>
+
+#include "error.h"
 
 const char *token_type_name(TokenType type) {
     switch (type) {
@@ -130,16 +131,14 @@ static int add_token(
 ) {
     // Keep the last slot free so there's always room for EOF.
     if (type != TOKEN_EOF && list->count >= MAX_TOKENS - 1) {
-        snprintf(error, error_size,
-                 "too many tokens (max %d)", MAX_TOKENS - 1);
-        return 0;
+        return fail(error, error_size,
+                    "too many tokens (max %d)", MAX_TOKENS - 1);
     }
 
     if (length >= MAX_TOKEN_LENGTH) {
-        snprintf(error, error_size,
-                 "token too long (max %d characters): '%.20s...'",
-                 MAX_TOKEN_LENGTH - 1, start);
-        return 0;
+        return fail(error, error_size,
+                    "token too long (max %d characters): '%.20s...'",
+                    MAX_TOKEN_LENGTH - 1, start);
     }
 
     Token *token = &list->tokens[list->count++];
@@ -200,8 +199,7 @@ int tokenise(const char *sql, TokenList *list, char *error, size_t error_size) {
             }
 
             if (sql[i] == '\0') {
-                snprintf(error, error_size, "unterminated string");
-                return 0;
+                return fail(error, error_size, "unterminated string");
             }
 
             if (!add_token(list, TOKEN_STRING, sql + start, i - start,
@@ -238,9 +236,8 @@ int tokenise(const char *sql, TokenList *list, char *error, size_t error_size) {
                 case '>': type = TOKEN_GREATER; break;
 
                 default:
-                    snprintf(error, error_size,
-                             "unexpected character '%c'", sql[i]);
-                    return 0;
+                    return fail(error, error_size,
+                                "unexpected character '%c'", sql[i]);
             }
         }
 

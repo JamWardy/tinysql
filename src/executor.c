@@ -5,31 +5,30 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "error.h"
+
 static int execute_create(Database *db, const Statement *stmt,
                           char *error, size_t error_size) {
     const CreateStatement *create = &stmt->as.create;
 
     if (database_find_table(db, stmt->table_name)) {
-        snprintf(error, error_size, "table '%s' already exists",
-                 stmt->table_name);
-        return 0;
+        return fail(error, error_size, "table '%s' already exists",
+                    stmt->table_name);
     }
 
     for (int i = 0; i < create->column_count; i++) {
         for (int j = 0; j < i; j++) {
             if (strcmp(create->columns[i].name,
                        create->columns[j].name) == 0) {
-                snprintf(error, error_size, "duplicate column '%s'",
-                         create->columns[i].name);
-                return 0;
+                return fail(error, error_size, "duplicate column '%s'",
+                            create->columns[i].name);
             }
         }
     }
 
     if (!database_create_table(db, stmt->table_name, create->columns,
                                (size_t)create->column_count)) {
-        snprintf(error, error_size, "out of memory");
-        return 0;
+        return fail(error, error_size, "out of memory");
     }
 
     return 1;
@@ -57,15 +56,13 @@ static int execute_insert(Database *db, const Statement *stmt,
     Table *table = database_find_table(db, stmt->table_name);
 
     if (!table) {
-        snprintf(error, error_size, "no such table '%s'", stmt->table_name);
-        return 0;
+        return fail(error, error_size, "no such table '%s'", stmt->table_name);
     }
 
     if ((size_t)insert->value_count != table->column_count) {
-        snprintf(error, error_size,
-                 "table '%s' has %zu columns but %d values were given",
-                 table->name, table->column_count, insert->value_count);
-        return 0;
+        return fail(error, error_size,
+                    "table '%s' has %zu columns but %d values were given",
+                    table->name, table->column_count, insert->value_count);
     }
 
     Value values[MAX_COLUMNS];
@@ -75,19 +72,17 @@ static int execute_insert(Database *db, const Statement *stmt,
         const Column *column = &table->columns[i];
 
         if (lit->type != column->type) {
-            snprintf(error, error_size,
-                     "column '%s' is %s but the value is %s",
-                     column->name, data_type_name(column->type),
-                     data_type_name(lit->type));
-            return 0;
+            return fail(error, error_size,
+                        "column '%s' is %s but the value is %s",
+                        column->name, data_type_name(column->type),
+                        data_type_name(lit->type));
         }
 
         values[i] = literal_to_value(lit);
     }
 
     if (!table_append_row(table, values)) {
-        snprintf(error, error_size, "out of memory");
-        return 0;
+        return fail(error, error_size, "out of memory");
     }
 
     return 1;
@@ -163,8 +158,7 @@ static int find_column(const Table *table, const char *name,
     int found = table_find_column(table, name);
 
     if (found < 0) {
-        snprintf(error, error_size, "no such column '%s'", name);
-        return 0;
+        return fail(error, error_size, "no such column '%s'", name);
     }
 
     *index = (size_t)found;
@@ -193,11 +187,10 @@ static int resolve_filter(const Table *table, const WhereClause *where,
 
         const Column *column = &table->columns[index];
         if (cmp->value.type != column->type) {
-            snprintf(error, error_size,
-                     "column '%s' is %s but the WHERE value is %s",
-                     column->name, data_type_name(column->type),
-                     data_type_name(cmp->value.type));
-            return 0;
+            return fail(error, error_size,
+                        "column '%s' is %s but the WHERE value is %s",
+                        column->name, data_type_name(column->type),
+                        data_type_name(cmp->value.type));
         }
 
         filter->columns[i] = index;
@@ -340,9 +333,8 @@ static int compute_aggregate(const Aggregate *agg, size_t column,
                 // integer is undefined behaviour, not a wrap-around.
                 if ((x > 0 && sum > LLONG_MAX - x) ||
                     (x < 0 && sum < LLONG_MIN - x)) {
-                    snprintf(error, error_size, "SUM(%s) is out of range",
-                             agg->column);
-                    return 0;
+                    return fail(error, error_size, "SUM(%s) is out of range",
+                                agg->column);
                 }
                 out->as.integer = sum + x;
                 break;
@@ -459,10 +451,9 @@ static int resolve_aggregates(const Table *table,
 
         const Column *column = &table->columns[columns[i]];
         if (agg->func == AGG_SUM && column->type != TYPE_INT) {
-            snprintf(error, error_size,
-                     "SUM needs an INT column but '%s' is %s",
-                     column->name, data_type_name(column->type));
-            return 0;
+            return fail(error, error_size,
+                        "SUM needs an INT column but '%s' is %s",
+                        column->name, data_type_name(column->type));
         }
     }
 
@@ -500,8 +491,7 @@ static int collect_rows(const Table *table, const Filter *filter,
 
     // malloc(0) may return NULL, which isn't a failure.
     if (!*rows && table->row_count > 0) {
-        snprintf(error, error_size, "out of memory");
-        return 0;
+        return fail(error, error_size, "out of memory");
     }
 
     *count = 0;
@@ -548,8 +538,7 @@ static int execute_select(Database *db, const Statement *stmt,
     const Table *table = database_find_table(db, stmt->table_name);
 
     if (!table) {
-        snprintf(error, error_size, "no such table '%s'", stmt->table_name);
-        return 0;
+        return fail(error, error_size, "no such table '%s'", stmt->table_name);
     }
 
     // Check every name before reading any row, so a bad query fails
@@ -600,8 +589,7 @@ static int execute_delete(Database *db, const Statement *stmt,
     Table *table = database_find_table(db, stmt->table_name);
 
     if (!table) {
-        snprintf(error, error_size, "no such table '%s'", stmt->table_name);
-        return 0;
+        return fail(error, error_size, "no such table '%s'", stmt->table_name);
     }
 
     // As in SELECT, check the whole WHERE before touching any row, so a
@@ -638,8 +626,7 @@ static int execute_update(Database *db, const Statement *stmt,
     Table *table = database_find_table(db, stmt->table_name);
 
     if (!table) {
-        snprintf(error, error_size, "no such table '%s'", stmt->table_name);
-        return 0;
+        return fail(error, error_size, "no such table '%s'", stmt->table_name);
     }
 
     // Check every assignment and the WHERE before changing any row.
@@ -656,18 +643,16 @@ static int execute_update(Database *db, const Statement *stmt,
 
         const Column *column = &table->columns[index];
         if (assign->value.type != column->type) {
-            snprintf(error, error_size,
-                     "column '%s' is %s but the value is %s",
-                     column->name, data_type_name(column->type),
-                     data_type_name(assign->value.type));
-            return 0;
+            return fail(error, error_size,
+                        "column '%s' is %s but the value is %s",
+                        column->name, data_type_name(column->type),
+                        data_type_name(assign->value.type));
         }
 
         for (int j = 0; j < i; j++) {
             if (columns[j] == index) {
-                snprintf(error, error_size, "column '%s' is set twice",
-                         column->name);
-                return 0;
+                return fail(error, error_size, "column '%s' is set twice",
+                            column->name);
             }
         }
 
@@ -696,9 +681,8 @@ static int execute_update(Database *db, const Statement *stmt,
             // Only text needs memory. Running out partway leaves the
             // changes made so far in place; there's no undo.
             if (!table_set_value(table, r, columns[i], &values[i])) {
-                snprintf(error, error_size,
-                         "out of memory after updating %zu rows", updated);
-                return 0;
+                return fail(error, error_size,
+                            "out of memory after updating %zu rows", updated);
             }
         }
         updated++;
@@ -713,8 +697,7 @@ static int execute_drop(Database *db, const Statement *stmt,
     Table *table = database_find_table(db, stmt->table_name);
 
     if (!table) {
-        snprintf(error, error_size, "no such table '%s'", stmt->table_name);
-        return 0;
+        return fail(error, error_size, "no such table '%s'", stmt->table_name);
     }
 
     database_drop_table(db, table);
@@ -738,6 +721,5 @@ int execute(Database *db, const Statement *stmt,
             return execute_drop(db, stmt, error, error_size);
     }
 
-    snprintf(error, error_size, "unknown statement type");
-    return 0;
+    return fail(error, error_size, "unknown statement type");
 }
