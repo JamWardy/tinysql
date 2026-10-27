@@ -98,7 +98,7 @@ typedef enum {
 // A function over all the matching rows: `COUNT(*)` or `SUM(price)`.
 typedef struct {
     AggregateFunc func;
-    char column[MAX_TOKEN_LENGTH];  // Unused for COUNT(*).
+    char column[MAX_TOKEN_LENGTH];  // Empty for COUNT(*).
 } Aggregate;
 
 typedef struct {

@@ -36,7 +36,7 @@ select_stmt   = SELECT select_list FROM IDENTIFIER [ WHERE condition ]
 select_list   = STAR
               | aggregate { COMMA aggregate }
               | IDENTIFIER { COMMA IDENTIFIER }
-aggregate     = COUNT LPAREN STAR RPAREN
+aggregate     = COUNT LPAREN ( STAR | IDENTIFIER ) RPAREN
               | ( SUM | MIN | MAX ) LPAREN IDENTIFIER RPAREN
 
 delete_stmt   = DELETE FROM IDENTIFIER [ WHERE condition ]
@@ -78,6 +78,7 @@ SELECT name FROM users ORDER BY age DESC LIMIT 3;
 SELECT * FROM users WHERE age > 18 ORDER BY name;  -- ASC is the default
 SELECT COUNT(*) FROM users WHERE age >= 18;
 SELECT COUNT(*), SUM(age), MIN(name), MAX(age) FROM users;
+SELECT COUNT(*), COUNT(age) FROM users;       -- COUNT(age) skips NULLs
 DELETE FROM users WHERE age < 18;
 DELETE FROM users;                            -- deletes every row
 UPDATE users SET age = 26 WHERE name = 'Alice';
@@ -106,7 +107,6 @@ SELECT * FROM users WHERE (age > 1;            -- unclosed '('
 SELECT * FROM users LIMIT 3 ORDER BY age;      -- ORDER BY comes first
 SELECT * FROM users ORDER BY age, name;        -- one sort column only
 SELECT name, COUNT(*) FROM users;              -- no mixing (no GROUP BY)
-SELECT COUNT(id) FROM users;                   -- only COUNT(*)
 SELECT * FROM users LIMIT -1;                  -- LIMIT can't be negative
 DELETE users WHERE id = 1;                     -- needs FROM
 DELETE * FROM users;                           -- no column list
@@ -162,14 +162,15 @@ The `ORDER BY` column doesn't have to be one of the selected columns.
 
 ## Aggregates
 
-`COUNT(*)`, `SUM`, `MIN` and `MAX` read every row that matches the
+`COUNT`, `SUM`, `MIN` and `MAX` read every row that matches the
 `WHERE` and give a single result row. `COUNT(*)` counts those rows.
 `SUM` adds an `INT` column, and fails if the total doesn't fit in one.
 `MIN` and `MAX` take either type, comparing values as described above.
 
-`COUNT(*)` counts rows, including ones with `NULL`s. `SUM`, `MIN` and
+`COUNT(*)` counts rows, including ones with `NULL`s. `COUNT(column)`
+counts only the rows where that column isn't `NULL`. `SUM`, `MIN` and
 `MAX` skip `NULL`s, and give `NULL` when there's nothing else to use: no
-matching rows, or only `NULL`s. With no matching rows, `COUNT(*)` gives 0.
+matching rows, or only `NULL`s. `COUNT` gives 0 instead.
 
 There's only ever one result row, so `ORDER BY` changes nothing and
 `LIMIT` matters only when it's 0. `COUNT`, `SUM`, `MIN` and `MAX` are

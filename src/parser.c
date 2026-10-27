@@ -265,7 +265,7 @@ static void error_mixed(Parser *p) {
          "can't mix columns and aggregates (there's no GROUP BY)");
 }
 
-// aggregate = COUNT LPAREN STAR RPAREN
+// aggregate = COUNT LPAREN ( STAR | IDENTIFIER ) RPAREN
 //           | ( SUM | MIN | MAX ) LPAREN IDENTIFIER RPAREN
 static int parse_aggregate(Parser *p, Aggregate *out) {
     switch (peek(p)->type) {
@@ -290,14 +290,13 @@ static int parse_aggregate(Parser *p, Aggregate *out) {
         return 0;
     }
 
-    if (out->func == AGG_COUNT) {
-        // Without NULL, COUNT(column) would always equal COUNT(*).
-        if (!expect(p, TOKEN_STAR, "'*' (only COUNT(*) is supported)")) {
-            return 0;
-        }
+    if (out->func == AGG_COUNT && match(p, TOKEN_STAR)) {
         out->column[0] = '\0';
     } else {
-        const Token *column = expect(p, TOKEN_IDENTIFIER, "column name");
+        const Token *column = expect(p, TOKEN_IDENTIFIER,
+                                     out->func == AGG_COUNT
+                                         ? "'*' or column name"
+                                         : "column name");
         if (!column) {
             return 0;
         }

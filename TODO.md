@@ -15,11 +15,11 @@ Done:
 - [x] `COUNT(*)`, `SUM`, `MIN` and `MAX`
 - [x] `.tables` and `.schema` commands
 - [x] `NULL`, stored as a row bitmap (file format version 2)
+- [x] `COUNT(column)`, counting the non-`NULL` values
 
 Next, roughly in order:
 
 - [ ] DELETE in one pass (see below)
-- [ ] `COUNT(column)`, counting the non-`NULL` values
 - [ ] `NOT NULL` on a column in `CREATE TABLE`
 - [ ] Primary key, then a hash index so `WHERE id = 5` doesn't scan
       every row

@@ -414,21 +414,39 @@ static const char *aggregate_name(AggregateFunc func) {
 static void aggregate_heading(const Aggregate *agg, char *heading,
                               size_t size) {
     snprintf(heading, size, "%s(%s)", aggregate_name(agg->func),
-             agg->func == AGG_COUNT ? "*" : agg->column);
+             agg->column[0] == '\0' ? "*" : agg->column);
+}
+
+// Counts rows for COUNT(*), or for COUNT(column) the rows whose value
+// at index column isn't NULL.
+static long long count_values(const Aggregate *agg, size_t column,
+                              const RowList *rows) {
+    if (agg->column[0] == '\0') {
+        return (long long)rows->count;
+    }
+
+    long long count = 0;
+    for (size_t r = 0; r < rows->count; r++) {
+        if (rows->rows[r]->values[column].type != TYPE_NULL) {
+            count++;
+        }
+    }
+    return count;
 }
 
 // Sets *out to agg over rows, reading the table column at index column
-// (unused for COUNT). Text in *out points into a row, so it's only for
-// printing straight away.
+// (unused for COUNT(*)). Text in *out points into a row, so it's only
+// for printing straight away.
 //
-// COUNT(*) counts rows, NULLs and all. SUM, MIN and MAX skip NULLs, and
-// give NULL when there's no other value: no rows, or only NULLs.
+// COUNT(*) counts rows, NULLs and all, and COUNT(column) the non-NULL
+// values; both give 0 when there are none. SUM, MIN and MAX skip NULLs,
+// and give NULL when there's no other value: no rows, or only NULLs.
 static int compute_aggregate(const Aggregate *agg, size_t column,
                              const RowList *rows, Value *out,
                              char *error, size_t error_size) {
     if (agg->func == AGG_COUNT) {
         out->type = TYPE_INT;
-        out->as.integer = (long long)rows->count;
+        out->as.integer = count_values(agg, column, rows);
         return 1;
     }
 
@@ -560,8 +578,8 @@ static int resolve_aggregates(const Table *table,
     for (size_t i = 0; i < out->count; i++) {
         const Aggregate *agg = &select->aggregates[i];
 
-        if (agg->func == AGG_COUNT) {
-            out->index[i] = 0;  // COUNT(*) reads no column.
+        if (agg->column[0] == '\0') {
+            out->index[i] = 0;  // COUNT(*) reads no column; 0 is a placeholder
             continue;
         }
 
