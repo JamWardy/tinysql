@@ -103,9 +103,9 @@ you. The codes we use:
 | Function | What it does | Used in |
 |---|---|---|
 | `malloc(n)` | Allocates `n` bytes on the heap. Returns `NULL` if memory ran out. The bytes start with whatever was there before. | `executor.c`, `persist.c`, `table.c` |
-| `calloc(count, size)` | Allocates room for `count` items of `size` bytes, all set to zero. | `table.c` |
+| `calloc(count, size)` | Allocates room for `count` items of `size` bytes, all set to zero. | `table.c`, `index.c` |
 | `realloc(p, n)` | Resizes an allocation. It may move the data, so it returns the new address, and on failure it returns `NULL` but leaves `p` as it was. That's why the result goes into a new variable before replacing the old pointer. | `table.c` |
-| `free(p)` | Gives an allocation back. Using `p` afterwards is a bug. `free(NULL)` does nothing. | `executor.c`, `persist.c`, `table.c` |
+| `free(p)` | Gives an allocation back. Using `p` afterwards is a bug. `free(NULL)` does nothing. | `executor.c`, `index.c`, `persist.c`, `table.c` |
 | `strtoll(text, end, base)` | Converts text to a `long long`. On overflow it returns the largest value and sets `errno` to `ERANGE`. | `parser.c` |
 | `qsort(array, count, size, compare)` | Sorts any array, calling `compare(a, b)` on pairs of elements. `compare` returns negative, 0 or positive like `strcmp`. | `executor.c`, for `ORDER BY` |
 
@@ -162,7 +162,8 @@ between, even `remove`, may change it.
 and line if `condition` is false. It's for things that can only go wrong
 through a bug in TinySQL, such as an index past the end of an array. It
 isn't for bad input from the user or the file; those get an error
-message. Used in `parser.c`, `persist.c`, `table.c` and `text.c`.
+message. Used in `index.c`, `parser.c`, `persist.c`, `table.c` and
+`text.c`.
 
 ## Types and limits
 
@@ -171,5 +172,6 @@ message. Used in `parser.c`, `persist.c`, `table.c` and `text.c`.
 | `size_t` | `<stddef.h>` | An unsigned integer for sizes and counts. It's what `sizeof` and `strlen` give |
 | `NULL` | `<stddef.h>` | The "points nowhere" pointer. Nothing to do with SQL's `NULL`, which a `Value` stores as `TYPE_NULL` |
 | `LLONG_MAX`, `LLONG_MIN` | `<limits.h>` | The largest and smallest `long long`. `SUM` checks against them before adding, and the loader uses `LLONG_MAX` to turn stored integers back into signed ones |
-| `uint64_t` | `<stdint.h>` | An unsigned integer of exactly 64 bits, for the file format |
+| `uint64_t` | `<stdint.h>` | An unsigned integer of exactly 64 bits, for the file format and index hashes |
 | `UINT32_MAX` | `<stdint.h>` | The largest 32-bit unsigned value, the most a string length in the file can be |
+| `SIZE_MAX` | `<stdint.h>` | The largest `size_t`, used to check an allocation's size in bytes fits before growing an index |
