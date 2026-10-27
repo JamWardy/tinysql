@@ -17,6 +17,9 @@
 //   "TSQL"  u32 version  u32 table_count
 //   per table:   string name  u32 column_count
 //                per column: u8 type  u8 flags  string name
+//                u8 constraint_count
+//                per constraint: u8 kind  u8 column_count
+//                                per column: u8 position
 //                u64 row_count
 //                per row:    null bitmap
 //                            per non-null value: INT as u64, TEXT as string
@@ -35,13 +38,19 @@
 // A column's flags byte has bit 0 set for NOT NULL; the other bits are 0.
 // A NOT NULL column has no NULLs, so its bitmap bit is never set.
 //
-// Older versions are still read, and are saved as version 3:
-//   version 2 has no flags byte: no column is NOT NULL.
+// A constraint's kind is 1 for PRIMARY KEY, the only kind so far, and
+// its columns are positions in the table, in key order. A table has at
+// most one PRIMARY KEY, whose columns are NOT NULL, and no two rows with
+// the same key. Indexes aren't stored: they're rebuilt as rows are read.
+//
+// Older versions are still read, and are saved as version 4:
+//   version 3 has no constraints.
+//   version 2 also has no flags byte: no column is NOT NULL.
 //   version 1 also has no bitmap: nothing is NULL.
 
 #define MAGIC "TSQL"
 #define MAGIC_LENGTH 4
-#define FORMAT_VERSION 3
+#define FORMAT_VERSION 4
 
 // Type codes in the file. Fixed here rather than taken from DataType,
 // so reordering that enum can't change the meaning of existing files.
@@ -50,6 +59,9 @@
 
 // Bits in a column's flags byte.
 #define FILE_FLAG_NOT_NULL 1
+
+// Constraint kinds in the file, fixed like the type codes.
+#define FILE_CONSTRAINT_PRIMARY_KEY 1
 
 // Bytes in a row's null bitmap.
 #define BITMAP_SIZE(column_count) (((column_count) + 7) / 8)
@@ -118,6 +130,25 @@ static void write_table(FILE *file, const Table *table) {
                              ? FILE_TYPE_INT : FILE_TYPE_TEXT, 1);
         write_uint(file, column->not_null ? FILE_FLAG_NOT_NULL : 0, 1);
         write_string(file, column->name);
+    }
+
+    assert(table->constraint_count <= UINT8_MAX);
+    write_uint(file, table->constraint_count, 1);
+
+    for (size_t i = 0; i < table->constraint_count; i++) {
+        const Constraint *constraint = &table->constraints[i];
+
+        switch (constraint->kind) {
+            case CONSTRAINT_PRIMARY_KEY:
+                write_uint(file, FILE_CONSTRAINT_PRIMARY_KEY, 1);
+                break;
+        }
+
+        // At most MAX_COLUMNS, so a byte is plenty for each.
+        write_uint(file, constraint->columns.count, 1);
+        for (size_t c = 0; c < constraint->columns.count; c++) {
+            write_uint(file, constraint->columns.index[c], 1);
+        }
     }
 
     write_uint(file, table->row_count, 8);
@@ -386,6 +417,16 @@ static int read_row(Reader *r, Table *table) {
         }
     }
 
+    for (size_t i = 0; i < table->constraint_count; i++) {
+        size_t other;
+
+        if (table_find_key(table, &table->constraints[i], values, &other)) {
+            values_free(values, table->column_count);
+            return read_fail(r, "table '%s' has two rows with the same key",
+                             table->name);
+        }
+    }
+
     // The table keeps its own copies, so ours are freed either way.
     int ok = table_append_row(table, values);
     values_free(values, table->column_count);
@@ -422,6 +463,84 @@ static int read_column(Reader *r, const char *table_name, ColumnDef *out) {
     out->not_null = (flags & FILE_FLAG_NOT_NULL) != 0;
 
     return read_name(r, out->name, sizeof(out->name));
+}
+
+// Reads a constraint's column positions into out, checking each is one
+// of table's columns, and only there once.
+static int read_key_columns(Reader *r, const Table *table, ColumnList *out) {
+    uint64_t count;
+
+    if (!read_uint(r, 1, &count)) {
+        return 0;
+    }
+    if (count == 0 || count > table->column_count) {
+        return read_fail(r, "table '%s' has a key with %llu columns",
+                         table->name, (unsigned long long)count);
+    }
+
+    out->count = (size_t)count;
+    for (size_t i = 0; i < out->count; i++) {
+        uint64_t position;
+
+        if (!read_uint(r, 1, &position)) {
+            return 0;
+        }
+        if (position >= table->column_count) {
+            return read_fail(r, "table '%s' has a key with no column %llu",
+                             table->name, (unsigned long long)position);
+        }
+        out->index[i] = (size_t)position;
+
+        for (size_t j = 0; j < i; j++) {
+            if (out->index[j] == out->index[i]) {
+                return read_fail(r, "table '%s' has a key with column '%s' "
+                                 "twice", table->name,
+                                 table->columns[position].name);
+            }
+        }
+    }
+
+    return 1;
+}
+
+// Reads table's constraints, which come before its rows, so each row is
+// checked against them as it's read. Files before version 4 have none.
+static int read_constraints(Reader *r, Table *table) {
+    uint64_t count;
+
+    if (r->version < 4) {
+        return 1;
+    }
+    if (!read_uint(r, 1, &count)) {
+        return 0;
+    }
+
+    for (uint64_t i = 0; i < count; i++) {
+        uint64_t kind;
+        ColumnList columns;
+
+        if (!read_uint(r, 1, &kind)) {
+            return 0;
+        }
+        if (kind != FILE_CONSTRAINT_PRIMARY_KEY) {
+            return read_fail(r, "table '%s' has an unknown constraint kind "
+                             "%llu", table->name, (unsigned long long)kind);
+        }
+        // PRIMARY KEY is the only kind, so any earlier one is a key too.
+        if (table->constraint_count > 0) {
+            return read_fail(r, "table '%s' has more than one primary key",
+                             table->name);
+        }
+
+        if (!read_key_columns(r, table, &columns)) {
+            return 0;
+        }
+        if (!table_add_constraint(table, CONSTRAINT_PRIMARY_KEY, &columns)) {
+            return read_fail(r, "out of memory");
+        }
+    }
+
+    return 1;
 }
 
 static int read_table(Reader *r, Database *db) {
@@ -464,12 +583,17 @@ static int read_table(Reader *r, Database *db) {
         return read_fail(r, "out of memory");
     }
 
+    // No other table is created while reading constraints and rows, so
+    // table stays valid.
+    if (!read_constraints(r, table)) {
+        return 0;
+    }
+
     uint64_t row_count;
     if (!read_uint(r, 8, &row_count)) {
         return 0;
     }
 
-    // No other table is created while reading rows, so table stays valid.
     for (uint64_t i = 0; i < row_count; i++) {
         if (!read_row(r, table)) {
             return 0;

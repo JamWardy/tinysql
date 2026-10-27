@@ -174,4 +174,5 @@ message. Used in `index.c`, `parser.c`, `persist.c`, `table.c` and
 | `LLONG_MAX`, `LLONG_MIN` | `<limits.h>` | The largest and smallest `long long`. `SUM` checks against them before adding, and the loader uses `LLONG_MAX` to turn stored integers back into signed ones |
 | `uint64_t` | `<stdint.h>` | An unsigned integer of exactly 64 bits, for the file format and index hashes |
 | `UINT32_MAX` | `<stdint.h>` | The largest 32-bit unsigned value, the most a string length in the file can be |
+| `UINT8_MAX` | `<stdint.h>` | The largest 8-bit unsigned value, the most constraints a table's count byte in the file can hold |
 | `SIZE_MAX` | `<stdint.h>` | The largest `size_t`, used to check an allocation's size in bytes fits before growing an index |
