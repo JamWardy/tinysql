@@ -93,7 +93,9 @@ you. The codes we use:
 | `strncmp(a, b, n)` | `strcmp` on at most the first `n` characters. | `tokeniser.c`, for two-character operators such as `<=` |
 | `memcpy(dest, src, n)` | Copies `n` bytes. Doesn't care about `'\0'`, so it works on any data. `dest` and `src` mustn't overlap. | `text.c`, `table.c`, `persist.c`, `input.c` |
 | `memmove(dest, src, n)` | `memcpy` that's safe when they overlap. Used to shift array elements down one place after a removal. | `table.c` |
-| `memset(p, 0, n)` | Sets `n` bytes to zero, e.g. to clear a struct. | `table.c` |
+| `memset(p, 0, n)` | Sets `n` bytes to zero, e.g. to clear a struct. | `table.c`, `persist.c` |
+| `memcmp(a, b, n)` | `strcmp` for raw bytes: compares exactly `n` bytes, ignoring `'\0'`. | `persist.c`, to check a file starts with `TSQL` |
+| `memchr(p, c, n)` | Finds the first byte equal to `c` in the first `n` bytes, or returns `NULL`. | `persist.c`, to reject a `'\0'` inside a stored string |
 | `strerror(errnum)` | The message for an error code, e.g. `"Permission denied"`. | `persist.c` |
 
 ## `<stdlib.h>`: heap memory, numbers and sorting
@@ -167,7 +169,7 @@ message. Used in `parser.c`, `persist.c`, `table.c` and `text.c`.
 | Name | Header | What it is |
 |---|---|---|
 | `size_t` | `<stddef.h>` | An unsigned integer for sizes and counts. It's what `sizeof` and `strlen` give |
-| `NULL` | `<stddef.h>` | The "points nowhere" pointer |
+| `NULL` | `<stddef.h>` | The "points nowhere" pointer. Nothing to do with SQL's `NULL`, which a `Value` stores as `TYPE_NULL` |
 | `LLONG_MAX`, `LLONG_MIN` | `<limits.h>` | The largest and smallest `long long`. `SUM` checks against them before adding, and the loader uses `LLONG_MAX` to turn stored integers back into signed ones |
 | `uint64_t` | `<stdint.h>` | An unsigned integer of exactly 64 bits, for the file format |
 | `UINT32_MAX` | `<stdint.h>` | The largest 32-bit unsigned value, the most a string length in the file can be |

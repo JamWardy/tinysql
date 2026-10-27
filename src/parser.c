@@ -79,10 +79,17 @@ static Literal literal_text(const char *text) {
     return lit;
 }
 
+static Literal literal_null(void) {
+    Literal lit;
+    lit.type = TYPE_NULL;
+    return lit;
+}
+
 const char *data_type_name(DataType type) {
     switch (type) {
         case TYPE_INT:  return "INT";
         case TYPE_TEXT: return "TEXT";
+        case TYPE_NULL: return "NULL";
     }
     return "UNKNOWN";
 }
@@ -160,7 +167,7 @@ static int parse_create(Parser *p, Statement *out) {
     return 1;
 }
 
-// value = [ MINUS ] NUMBER | STRING
+// value = [ MINUS ] NUMBER | STRING | NULL
 static int parse_value(Parser *p, Literal *out) {
     int negative = match(p, TOKEN_MINUS);
     const Token *token = peek(p);
@@ -186,9 +193,11 @@ static int parse_value(Parser *p, Literal *out) {
         *out = literal_int(n);
     } else if (token->type == TOKEN_STRING && !negative) {
         *out = literal_text(token->text);
+    } else if (token->type == TOKEN_NULL && !negative) {
+        *out = literal_null();
     } else {
         error_expected(p, negative ? "number after '-'"
-                                   : "value (number or 'text')");
+                                   : "value (number, 'text' or NULL)");
         return 0;
     }
 
@@ -363,6 +372,7 @@ static int parse_select_list(Parser *p, SelectStatement *out) {
 }
 
 // comparison = IDENTIFIER compare_op value
+//            | IDENTIFIER IS [ NOT ] NULL
 // compare_op = EQUAL | NOT_EQUAL | LESS | LESS_EQUAL
 //            | GREATER | GREATER_EQUAL
 static int parse_comparison(Parser *p, Comparison *out) {
@@ -370,6 +380,15 @@ static int parse_comparison(Parser *p, Comparison *out) {
                                  "column name, NOT or '('");
     if (!column) {
         return 0;
+    }
+    copy_text(out->column, sizeof(out->column), column->text);
+
+    if (match(p, TOKEN_IS)) {
+        int negated = match(p, TOKEN_NOT);
+
+        out->op = negated ? CMP_IS_NOT_NULL : CMP_IS_NULL;
+        out->value = literal_null();
+        return expect(p, TOKEN_NULL, negated ? "NULL" : "NOT or NULL") != NULL;
     }
 
     switch (peek(p)->type) {
@@ -381,7 +400,7 @@ static int parse_comparison(Parser *p, Comparison *out) {
         case TOKEN_GREATER_EQUAL: out->op = CMP_GREATER_EQUAL; break;
 
         default:
-            error_expected(p, "comparison (=, !=, <, <=, > or >=)");
+            error_expected(p, "comparison (=, !=, <, <=, >, >= or IS)");
             return 0;
     }
     p->pos++;
@@ -390,7 +409,13 @@ static int parse_comparison(Parser *p, Comparison *out) {
         return 0;
     }
 
-    copy_text(out->column, sizeof(out->column), column->text);
+    // In SQL, `age = NULL` matches no row, not even one whose age is
+    // NULL. That's a common mistake, so it's an error here instead.
+    if (out->value.type == TYPE_NULL) {
+        return fail(p->error, sizeof(p->error),
+                    "use IS NULL or IS NOT NULL to test for NULL");
+    }
+
     return 1;
 }
 

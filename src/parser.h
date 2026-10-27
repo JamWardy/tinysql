@@ -7,7 +7,8 @@
 
 typedef enum {
     TYPE_INT,
-    TYPE_TEXT
+    TYPE_TEXT,
+    TYPE_NULL  // Only a value can be NULL; a column is INT or TEXT.
 } DataType;
 
 // A column in CREATE TABLE: `name TEXT`.
@@ -16,7 +17,8 @@ typedef struct {
     DataType type;
 } ColumnDef;
 
-// A value written in the SQL: `25` or `'Alice'`.
+// A value written in the SQL: `25`, `'Alice'` or `NULL`. For NULL, as
+// is unused.
 typedef struct {
     DataType type;
     union {
@@ -41,10 +43,14 @@ typedef enum {
     CMP_LESS,
     CMP_LESS_EQUAL,
     CMP_GREATER,
-    CMP_GREATER_EQUAL
+    CMP_GREATER_EQUAL,
+    CMP_IS_NULL,
+    CMP_IS_NOT_NULL
 } CompareOp;
 
-// A column compared with a value: `age > 18`.
+// A column compared with a value: `age > 18`, or tested for NULL:
+// `age IS NULL`, for which value is unused. A comparison's value is
+// never NULL; the parser points the user to IS NULL instead.
 typedef struct {
     char column[MAX_TOKEN_LENGTH];
     CompareOp op;
@@ -158,7 +164,7 @@ typedef struct {
     } as;
 } Statement;
 
-// The type as written in SQL: "INT" or "TEXT".
+// The type as written in SQL: "INT", "TEXT" or "NULL".
 const char *data_type_name(DataType type);
 
 // Read a Literal's value. The type must match: reading the wrong member

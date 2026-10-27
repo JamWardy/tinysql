@@ -20,7 +20,8 @@ typedef struct {
     DataType type;
 } Column;
 
-// A stored value. When type is TYPE_TEXT, as.text is owned by the Row.
+// A stored value: its column's type, or TYPE_NULL, for which as is
+// unused. When type is TYPE_TEXT, as.text is owned by the Row.
 typedef struct {
     DataType type;
     union {
@@ -73,12 +74,12 @@ void database_drop_table(Database *db, Table *table);
 int table_find_column(const Table *table, const char *name);
 
 // Appends a row with copies of values, which must hold column_count
-// values whose types match the columns; the caller validates first.
+// values, each NULL or of its column's type; the caller validates first.
 // Returns 1, or 0 if memory ran out (table is unchanged).
 int table_append_row(Table *table, const Value *values);
 
-// Replaces one value of a row with a copy of value, whose type must
-// match the column; the caller validates first.
+// Replaces one value of a row with a copy of value, which must be NULL
+// or of the column's type; the caller validates first.
 // Returns 1, or 0 if memory ran out (the old value is kept).
 int table_set_value(Table *table, size_t row, size_t column,
                     const Value *value);

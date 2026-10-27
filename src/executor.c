@@ -18,11 +18,12 @@ static Table *find_table(const Database *db, const char *name,
     return table;
 }
 
-// Checks that a value of type given can go in column. what names the
-// value in the error, e.g. "value" or "WHERE value".
+// Checks that a value of type given can go in column. NULL can go in
+// any column. what names the value in the error, e.g. "value" or
+// "WHERE value".
 static int check_type(const Column *column, DataType given, const char *what,
                       char *error, size_t error_size) {
-    if (given != column->type) {
+    if (given != TYPE_NULL && given != column->type) {
         return fail(error, error_size, "column '%s' is %s but the %s is %s",
                     column->name, data_type_name(column->type), what,
                     data_type_name(given));
@@ -65,7 +66,7 @@ static Value literal_to_value(const Literal *lit) {
     value.type = lit->type;
     if (lit->type == TYPE_INT) {
         value.as.integer = literal_as_int(lit);
-    } else {
+    } else if (lit->type == TYPE_TEXT) {
         // Value.as.text isn't const because the table frees its own
         // copies; the table functions only read this one and copy it.
         value.as.text = (char *)literal_as_text(lit);
@@ -116,8 +117,8 @@ typedef struct {
 } Filter;
 
 // Returns <0, 0 or >0 as a is less than, equal to or greater than b,
-// which must have the same type. Text compares byte by byte, so
-// 'B' < 'a' and '10' < '9'.
+// which must have the same type and not be NULL. Text compares byte by
+// byte, so 'B' < 'a' and '10' < '9'.
 static int compare_values(const Value *a, const Value *b) {
     if (a->type == TYPE_INT) {
         long long x = a->as.integer;
@@ -128,46 +129,100 @@ static int compare_values(const Value *a, const Value *b) {
     return strcmp(a->as.text, b->as.text);
 }
 
-static int comparison_matches(const Value *value, const Comparison *cmp) {
+// SQL's three-valued logic. A comparison with NULL, such as `age > 30`
+// when age is NULL, is neither true nor false but unknown: NULL means
+// "no value", so there's nothing to compare. WHERE keeps a row only
+// when its condition is true, so unknown rows are left out.
+typedef enum {
+    TRUTH_FALSE,
+    TRUTH_TRUE,
+    TRUTH_UNKNOWN
+} Truth;
+
+static Truth truth(int b) {
+    return b ? TRUTH_TRUE : TRUTH_FALSE;
+}
+
+static Truth comparison_truth(const Value *value, const Comparison *cmp) {
+    if (cmp->op == CMP_IS_NULL) {
+        return truth(value->type == TYPE_NULL);
+    }
+    if (cmp->op == CMP_IS_NOT_NULL) {
+        return truth(value->type != TYPE_NULL);
+    }
+    if (value->type == TYPE_NULL) {
+        return TRUTH_UNKNOWN;
+    }
+
     Value wanted = literal_to_value(&cmp->value);
     int c = compare_values(value, &wanted);
 
     switch (cmp->op) {
-        case CMP_EQUAL:         return c == 0;
-        case CMP_NOT_EQUAL:     return c != 0;
-        case CMP_LESS:          return c < 0;
-        case CMP_LESS_EQUAL:    return c <= 0;
-        case CMP_GREATER:       return c > 0;
-        case CMP_GREATER_EQUAL: return c >= 0;
+        case CMP_EQUAL:         return truth(c == 0);
+        case CMP_NOT_EQUAL:     return truth(c != 0);
+        case CMP_LESS:          return truth(c < 0);
+        case CMP_LESS_EQUAL:    return truth(c <= 0);
+        case CMP_GREATER:       return truth(c > 0);
+        case CMP_GREATER_EQUAL: return truth(c >= 0);
+        case CMP_IS_NULL:
+        case CMP_IS_NOT_NULL:
+            break;  // Handled above.
     }
-    return 0;
+    return TRUTH_FALSE;
 }
 
 // Evaluates the condition node at index against row, recursing into
-// its children.
-static int condition_matches(const Filter *filter, const Row *row,
+// its children. Unknown spreads only where it could change the answer:
+// false AND unknown is false, and true OR unknown is true, whatever the
+// unknown value turns out to be.
+static Truth condition_truth(const Filter *filter, const Row *row,
                              int index) {
     const Condition *cond = &filter->conditions[index];
 
     switch (cond->type) {
         case COND_COMPARE:
-            return comparison_matches(&row->values[filter->columns[index]],
-                                      &cond->as.compare);
-        case COND_AND:
-            return condition_matches(filter, row, cond->as.children.left) &&
-                   condition_matches(filter, row, cond->as.children.right);
-        case COND_OR:
-            return condition_matches(filter, row, cond->as.children.left) ||
-                   condition_matches(filter, row, cond->as.children.right);
+            return comparison_truth(&row->values[filter->columns[index]],
+                                    &cond->as.compare);
+        case COND_AND: {
+            Truth left = condition_truth(filter, row, cond->as.children.left);
+            if (left == TRUTH_FALSE) {
+                return TRUTH_FALSE;
+            }
+            Truth right = condition_truth(filter, row,
+                                          cond->as.children.right);
+            if (right == TRUTH_FALSE) {
+                return TRUTH_FALSE;
+            }
+            return left == TRUTH_TRUE && right == TRUTH_TRUE
+                       ? TRUTH_TRUE : TRUTH_UNKNOWN;
+        }
+        case COND_OR: {
+            Truth left = condition_truth(filter, row, cond->as.children.left);
+            if (left == TRUTH_TRUE) {
+                return TRUTH_TRUE;
+            }
+            Truth right = condition_truth(filter, row,
+                                          cond->as.children.right);
+            if (right == TRUTH_TRUE) {
+                return TRUTH_TRUE;
+            }
+            return left == TRUTH_FALSE && right == TRUTH_FALSE
+                       ? TRUTH_FALSE : TRUTH_UNKNOWN;
+        }
         case COND_NOT:
-            return !condition_matches(filter, row, cond->as.children.left);
+            switch (condition_truth(filter, row, cond->as.children.left)) {
+                case TRUTH_FALSE:   return TRUTH_TRUE;
+                case TRUTH_TRUE:    return TRUTH_FALSE;
+                case TRUTH_UNKNOWN: return TRUTH_UNKNOWN;
+            }
     }
-    return 0;
+    return TRUTH_FALSE;
 }
 
 // A NULL filter matches every row.
 static int row_matches(const Row *row, const Filter *filter) {
-    return !filter || condition_matches(filter, row, filter->root);
+    return !filter ||
+           condition_truth(filter, row, filter->root) == TRUTH_TRUE;
 }
 
 // Sets *index to the position of the column called name in table, the
@@ -225,20 +280,26 @@ static int resolve_where(const Table *table, int has_where,
     return 1;
 }
 
+// How a NULL prints. Printing nothing, as some databases do, would look
+// the same as the empty string ''.
+#define NULL_TEXT "NULL"
+
 // Number of characters the value takes when printed.
 static int value_width(const Value *value) {
-    if (value->type == TYPE_INT) {
-        return snprintf(NULL, 0, "%lld", value->as.integer);
+    switch (value->type) {
+        case TYPE_INT:  return snprintf(NULL, 0, "%lld", value->as.integer);
+        case TYPE_TEXT: return (int)strlen(value->as.text);
+        case TYPE_NULL: return (int)strlen(NULL_TEXT);
     }
-    return (int)strlen(value->as.text);
+    return 0;
 }
 
 static void print_value(const Value *value, int width) {
-    // Numbers line up on the right, text on the left.
-    if (value->type == TYPE_INT) {
-        printf("%*lld", width, value->as.integer);
-    } else {
-        printf("%-*s", width, value->as.text);
+    // Numbers line up on the right, text and NULL on the left.
+    switch (value->type) {
+        case TYPE_INT:  printf("%*lld", width, value->as.integer); break;
+        case TYPE_TEXT: printf("%-*s", width, value->as.text); break;
+        case TYPE_NULL: printf("%-*s", width, NULL_TEXT); break;
     }
 }
 
@@ -296,12 +357,25 @@ static struct {
     int descending;
 } sort_by;
 
+// compare_values for sorting, where either value may be NULL. NULL
+// sorts after every other value, as in PostgreSQL, so NULLs come last
+// in ascending order and first in descending order.
+static int compare_for_sort(const Value *a, const Value *b) {
+    int a_null = a->type == TYPE_NULL;
+    int b_null = b->type == TYPE_NULL;
+
+    if (a_null || b_null) {
+        return a_null - b_null;
+    }
+    return compare_values(a, b);
+}
+
 // Compares two elements of an array of const Row *.
 static int compare_rows(const void *a, const void *b) {
     const Row *x = *(const Row *const *)a;
     const Row *y = *(const Row *const *)b;
-    int c = compare_values(&x->values[sort_by.column],
-                           &y->values[sort_by.column]);
+    int c = compare_for_sort(&x->values[sort_by.column],
+                             &y->values[sort_by.column]);
 
     if (sort_by.descending) {
         c = -c;
@@ -336,6 +410,9 @@ static void aggregate_heading(const Aggregate *agg, char *heading,
 // Sets *out to agg over rows, reading the table column at index column
 // (unused for COUNT). Text in *out points into a row, so it's only for
 // printing straight away.
+//
+// COUNT(*) counts rows, NULLs and all. SUM, MIN and MAX skip NULLs, and
+// give NULL when there's no other value: no rows, or only NULLs.
 static int compute_aggregate(const Aggregate *agg, size_t column,
                              const Row *const *rows, size_t count,
                              Value *out, char *error, size_t error_size) {
@@ -345,18 +422,20 @@ static int compute_aggregate(const Aggregate *agg, size_t column,
         return 1;
     }
 
-    // SQL gives NULL for SUM, MIN or MAX of no rows. Until NULL exists,
-    // an empty string stands in, so the cell prints empty.
-    if (count == 0) {
-        out->type = TYPE_TEXT;
-        out->as.text = "";  // Only printed, never written to.
-        return 1;
-    }
+    out->type = TYPE_NULL;
 
-    *out = rows[0]->values[column];
-
-    for (size_t r = 1; r < count; r++) {
+    for (size_t r = 0; r < count; r++) {
         const Value *value = &rows[r]->values[column];
+
+        if (value->type == TYPE_NULL) {
+            continue;
+        }
+
+        // The first value found starts the result.
+        if (out->type == TYPE_NULL) {
+            *out = *value;
+            continue;
+        }
 
         switch (agg->func) {
             case AGG_SUM: {

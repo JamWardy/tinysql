@@ -29,7 +29,7 @@ column_type   = INT | TEXT
 insert_stmt   = INSERT INTO IDENTIFIER
                 VALUES LPAREN value { COMMA value } RPAREN
 
-value         = [ MINUS ] NUMBER | STRING
+value         = [ MINUS ] NUMBER | STRING | NULL
 
 select_stmt   = SELECT select_list FROM IDENTIFIER [ WHERE condition ]
                 [ ORDER BY IDENTIFIER [ ASC | DESC ] ] [ LIMIT NUMBER ]
@@ -53,6 +53,7 @@ not_condition = NOT not_condition
               | LPAREN condition RPAREN
               | comparison
 comparison    = IDENTIFIER compare_op value
+              | IDENTIFIER IS [ NOT ] NULL
 compare_op    = EQUAL | NOT_EQUAL | LESS | LESS_EQUAL
               | GREATER | GREATER_EQUAL
 ```
@@ -65,11 +66,14 @@ Accepted:
 CREATE TABLE users (id INT, name TEXT, age INT);
 INSERT INTO users VALUES (1, 'Alice', 25);
 INSERT INTO users VALUES (-3, 'Eve', 30);
+INSERT INTO users VALUES (2, NULL, NULL);    -- any column can be NULL
 SELECT * FROM users;
 SELECT name, age FROM users;
 SELECT * FROM users WHERE age >= 18;
 SELECT name FROM users WHERE name != 'Bob';   -- `<>` also means not equal
 SELECT * FROM users WHERE age >= 18 AND NOT (name = 'Bob' OR id = 1);
+SELECT * FROM users WHERE age IS NULL;
+SELECT name FROM users WHERE age IS NOT NULL ORDER BY age;
 SELECT name FROM users ORDER BY age DESC LIMIT 3;
 SELECT * FROM users WHERE age > 18 ORDER BY name;  -- ASC is the default
 SELECT COUNT(*) FROM users WHERE age >= 18;
@@ -78,6 +82,7 @@ DELETE FROM users WHERE age < 18;
 DELETE FROM users;                            -- deletes every row
 UPDATE users SET age = 26 WHERE name = 'Alice';
 UPDATE users SET name = 'Anon', age = 0;      -- updates every row
+UPDATE users SET age = NULL WHERE id = 2;
 DROP TABLE users;
 ```
 
@@ -89,10 +94,13 @@ CREATE TABLE users (id INTEGER);   -- type must be INT or TEXT
 INSERT INTO users VALUES (1, 2,);  -- trailing comma
 INSERT INTO users VALUES (--1);    -- only one '-'
 INSERT INTO users VALUES (-'a');   -- '-' only before a number
+INSERT INTO users VALUES (-NULL);  -- or NULL
 SELECT * FROM users                -- missing semicolon
 SELECT *, name FROM users;         -- '*' can't be mixed with columns
 SELECT * FROM users; SELECT 1;     -- one statement at a time
 SELECT * FROM users WHERE 18 < age;   -- column must come first
+SELECT * FROM users WHERE age = NULL;          -- use IS NULL (see below)
+SELECT * FROM users WHERE age IS 18;           -- IS only tests for NULL
 SELECT * FROM users WHERE age > 1 AND;         -- AND needs a right side
 SELECT * FROM users WHERE (age > 1;            -- unclosed '('
 SELECT * FROM users LIMIT 3 ORDER BY age;      -- ORDER BY comes first
@@ -115,9 +123,10 @@ depend on what tables exist:
 
 - the table exists (or, for `CREATE`, doesn't already exist)
 - column names are unique within a `CREATE TABLE`
-- `INSERT` has the right number of values, of the right types
+- `INSERT` has the right number of values, of the right types (`NULL`
+  fits any column)
 - `UPDATE` sets columns that exist, each at most once, to values of the
-  right types
+  right types or `NULL`
 - `SELECT` names columns that exist, including the `ORDER BY` column
   and the columns inside aggregates
 - `SUM` is given an `INT` column
@@ -158,12 +167,47 @@ The `ORDER BY` column doesn't have to be one of the selected columns.
 `SUM` adds an `INT` column, and fails if the total doesn't fit in one.
 `MIN` and `MAX` take either type, comparing values as described above.
 
-With no matching rows, `COUNT(*)` gives 0 and the others give an empty
-cell (SQL gives `NULL`, which TinySQL doesn't have yet).
+`COUNT(*)` counts rows, including ones with `NULL`s. `SUM`, `MIN` and
+`MAX` skip `NULL`s, and give `NULL` when there's nothing else to use: no
+matching rows, or only `NULL`s. With no matching rows, `COUNT(*)` gives 0.
 
 There's only ever one result row, so `ORDER BY` changes nothing and
 `LIMIT` matters only when it's 0. `COUNT`, `SUM`, `MIN` and `MAX` are
 keywords, so they can't be used as table or column names.
+
+## NULL
+
+`NULL` means "no value": unknown or missing, such as an age nobody gave.
+It isn't 0 or `''`, and any column can hold it. Results print it as
+`NULL`, so it doesn't look the same as an empty string.
+
+Because a `NULL` has no value, comparing one with anything, even another
+`NULL`, gives neither true nor false but *unknown*. `WHERE` keeps only
+the rows where the condition is true, so it leaves out unknown ones:
+
+```sql
+SELECT * FROM users WHERE age > 30;       -- leaves out NULL ages
+SELECT * FROM users WHERE NOT age > 30;   -- leaves them out too
+SELECT * FROM users WHERE age IS NULL;    -- finds them
+```
+
+In SQL, `age = NULL` is unknown for every row, so it matches nothing,
+which is a common mistake. TinySQL rejects it and points to `IS NULL`.
+
+Unknown follows these rules, called three-valued logic:
+
+| `a`     | `b`     | `a AND b` | `a OR b` | `NOT a` |
+|---------|---------|-----------|----------|---------|
+| true    | unknown | unknown   | true     | false   |
+| false   | unknown | false     | unknown  | true    |
+| unknown | unknown | unknown   | unknown  | unknown |
+
+`false AND` anything is false, and `true OR` anything is true, so an
+unknown there doesn't matter.
+
+`ORDER BY` puts `NULL`s after every other value: last in ascending
+order, first with `DESC`. `IS` and `NULL` are keywords, so they can't be
+used as table or column names.
 
 ## Commands
 

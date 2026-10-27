@@ -154,7 +154,8 @@ int table_append_row(Table *table, const Value *values) {
 
     for (size_t i = 0; i < table->column_count; i++) {
         // A mismatch means the executor skipped validation.
-        assert(values[i].type == table->columns[i].type);
+        assert(values[i].type == table->columns[i].type ||
+               values[i].type == TYPE_NULL);
 
         copy[i].type = values[i].type;
 
@@ -166,7 +167,7 @@ int table_append_row(Table *table, const Value *values) {
                 free(copy);
                 return 0;
             }
-        } else {
+        } else if (values[i].type == TYPE_INT) {
             copy[i].as.integer = values[i].as.integer;
         }
     }
@@ -181,22 +182,24 @@ int table_set_value(Table *table, size_t row, size_t column,
                     const Value *value) {
     assert(row < table->row_count && column < table->column_count);
     // A mismatch means the executor skipped validation.
-    assert(value->type == table->columns[column].type);
+    assert(value->type == table->columns[column].type ||
+           value->type == TYPE_NULL);
 
-    Value *slot = &table->rows[row].values[column];
+    Value copy = *value;
 
     if (value->type == TYPE_TEXT) {
-        // Copy before freeing, so a failure leaves the old text in place.
-        char *text = copy_string(value->as.text);
-        if (!text) {
+        copy.as.text = copy_string(value->as.text);
+        if (!copy.as.text) {
             return 0;
         }
-        free(slot->as.text);
-        slot->as.text = text;
-    } else {
-        slot->as.integer = value->as.integer;
     }
 
+    // Free the old value only once the new one is ready, so a failure
+    // leaves the old one in place. The old value may be NULL, which
+    // free_values knows has no text to free.
+    Value *slot = &table->rows[row].values[column];
+    free_values(slot, 1);
+    *slot = copy;
     return 1;
 }
 

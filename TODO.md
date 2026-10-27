@@ -14,11 +14,13 @@ Done:
 - [x] Statements across several lines
 - [x] `COUNT(*)`, `SUM`, `MIN` and `MAX`
 - [x] `.tables` and `.schema` commands
+- [x] `NULL`, stored as a row bitmap (file format version 2)
 
 Next, roughly in order:
 
 - [ ] DELETE in one pass (see below)
-- [ ] `NULL`, stored as a row bitmap (see below)
+- [ ] `COUNT(column)`, counting the non-`NULL` values
+- [ ] `NOT NULL` on a column in `CREATE TABLE`
 - [ ] Primary key, then a hash index so `WHERE id = 5` doesn't scan
       every row
 
@@ -28,33 +30,6 @@ Smaller tidy-ups:
       out of `not_condition`, whose name suggests it's always a NOT
 - [ ] `compile_commands.json` (git-ignored), so clangd jumps from a
       call to the function body
-
-## NULL support: store nulls as a bitmap per row
-
-Decided: when we add `NULL`, the file format marks nulls with a **null
-bitmap at the start of each row**, as PostgreSQL does.
-
-```
-row = [null bitmap: 1 bit per column, rounded up to whole bytes]
-      [each non-null value, stored as in format version 1]
-```
-
-- Bit `i` set means column `i` is null: `bitmap[i / 8] & (1 << (i % 8))`.
-- A null value has no bytes after the bitmap; the others are unchanged.
-- Overhead: 1 byte per row for up to 8 columns, 4 bytes at the max of 32.
-
-This changes the layout, so `FORMAT_VERSION` goes to 2. The loader
-should still accept version 1 files (rows with no bitmap, nothing null).
-
-Rejected alternatives:
-
-- **Flag byte per value**: simplest, but costs a byte per value.
-- **Type code per value** (SQLite): most compact, but most complex, and
-  repeats type information our columns already fix.
-
-With `NULL` in place, `SUM`, `MIN` and `MAX` of no rows should give
-`NULL` rather than the empty cell they show now, and `COUNT(column)`
-becomes worth adding.
 
 ## DELETE: remove matching rows in one pass
 

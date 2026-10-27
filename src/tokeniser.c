@@ -47,6 +47,8 @@ const char *token_type_name(TokenType type) {
         case TOKEN_AND:            return "AND";
         case TOKEN_OR:             return "OR";
         case TOKEN_NOT:            return "NOT";
+        case TOKEN_IS:             return "IS";
+        case TOKEN_NULL:           return "NULL";
         case TOKEN_INT:            return "INT";
         case TOKEN_TEXT:           return "TEXT";
         case TOKEN_EOF:            return "EOF";
@@ -84,6 +86,8 @@ static const Keyword keywords[] = {
     { "AND",    TOKEN_AND },
     { "OR",     TOKEN_OR },
     { "NOT",    TOKEN_NOT },
+    { "IS",     TOKEN_IS },
+    { "NULL",   TOKEN_NULL },
     { "INT",    TOKEN_INT },
     { "TEXT",   TOKEN_TEXT },
 };

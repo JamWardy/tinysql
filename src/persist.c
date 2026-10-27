@@ -18,19 +18,38 @@
 //   per table:   string name  u32 column_count
 //                per column: u8 type  string name
 //                u64 row_count
-//                per row, per column: INT as u64, TEXT as string
+//                per row:    null bitmap
+//                            per non-null value: INT as u64, TEXT as string
 //
 // A string is a u32 byte count followed by the bytes, with no '\0'.
 // Negative INTs are stored as their two's complement.
+//
+// The null bitmap has one bit per column, rounded up to whole bytes:
+// bit i (bitmap[i / 8] & (1 << (i % 8))) set means column i is NULL,
+// and a NULL has no bytes of its own. Bits past the last column are 0.
+// This costs one byte per row for up to 8 columns, where a flag byte
+// per value would cost one per value. PostgreSQL does the same. SQLite
+// instead stores a type code per value, which is more compact but more
+// complex, and repeats what our column types already fix.
+//
+// Version 1 files are the same but with no bitmap: nothing is NULL.
+// They're still read, and are saved as version 2.
 
 #define MAGIC "TSQL"
 #define MAGIC_LENGTH 4
-#define FORMAT_VERSION 1
+#define FORMAT_VERSION 2
 
 // Type codes in the file. Fixed here rather than taken from DataType,
 // so reordering that enum can't change the meaning of existing files.
 #define FILE_TYPE_INT  1
 #define FILE_TYPE_TEXT 2
+
+// Bytes in a row's null bitmap.
+#define BITMAP_SIZE(column_count) (((column_count) + 7) / 8)
+
+static int bit_is_set(const unsigned char *bitmap, size_t i) {
+    return (bitmap[i / 8] >> (i % 8)) & 1;
+}
 
 // ---- Saving ----
 
@@ -50,6 +69,27 @@ static void write_string(FILE *file, const char *s) {
     fwrite(s, 1, length, file);
 }
 
+static void write_row(FILE *file, const Row *row) {
+    unsigned char bitmap[BITMAP_SIZE(MAX_COLUMNS)] = { 0 };
+
+    for (size_t i = 0; i < row->count; i++) {
+        if (row->values[i].type == TYPE_NULL) {
+            bitmap[i / 8] |= (unsigned char)(1 << (i % 8));
+        }
+    }
+    fwrite(bitmap, 1, BITMAP_SIZE(row->count), file);
+
+    for (size_t i = 0; i < row->count; i++) {
+        const Value *value = &row->values[i];
+
+        if (value->type == TYPE_INT) {
+            write_uint(file, (uint64_t)value->as.integer, 8);
+        } else if (value->type == TYPE_TEXT) {
+            write_string(file, value->as.text);
+        }
+    }
+}
+
 static void write_table(FILE *file, const Table *table) {
     write_string(file, table->name);
     write_uint(file, table->column_count, 4);
@@ -65,15 +105,7 @@ static void write_table(FILE *file, const Table *table) {
     write_uint(file, table->row_count, 8);
 
     for (size_t r = 0; r < table->row_count; r++) {
-        const Row *row = &table->rows[r];
-
-        for (size_t i = 0; i < row->count; i++) {
-            if (row->values[i].type == TYPE_INT) {
-                write_uint(file, (uint64_t)row->values[i].as.integer, 8);
-            } else {
-                write_string(file, row->values[i].as.text);
-            }
-        }
+        write_row(file, &table->rows[r]);
     }
 }
 
@@ -152,6 +184,7 @@ int database_save(const Database *db, const char *path,
 typedef struct {
     FILE *file;
     uint64_t remaining;  // Bytes left in the file; no length can exceed it.
+    uint64_t version;    // The file's FORMAT_VERSION, once it's read.
     char *error;
     size_t error_size;
 } Reader;
@@ -281,11 +314,46 @@ static void free_texts(Value *values, size_t count) {
     }
 }
 
+// Reads a row's null bitmap into bitmap, which must hold
+// BITMAP_SIZE(MAX_COLUMNS) bytes. Version 1 rows have none, so it's
+// left all 0: nothing is NULL.
+static int read_bitmap(Reader *r, const Table *table,
+                       unsigned char *bitmap) {
+    size_t size = BITMAP_SIZE(table->column_count);
+
+    memset(bitmap, 0, BITMAP_SIZE(MAX_COLUMNS));
+    if (r->version == 1) {
+        return 1;
+    }
+
+    if (!read_bytes(r, bitmap, size)) {
+        return 0;
+    }
+
+    for (size_t i = table->column_count; i < size * 8; i++) {
+        if (bit_is_set(bitmap, i)) {
+            return read_fail(r, "table '%s' has a row with a bad null bitmap",
+                             table->name);
+        }
+    }
+    return 1;
+}
+
 // Reads one row's values and appends it to table.
 static int read_row(Reader *r, Table *table) {
+    unsigned char bitmap[BITMAP_SIZE(MAX_COLUMNS)];
     Value values[MAX_COLUMNS];
 
+    if (!read_bitmap(r, table, bitmap)) {
+        return 0;
+    }
+
     for (size_t i = 0; i < table->column_count; i++) {
+        if (bit_is_set(bitmap, i)) {
+            values[i].type = TYPE_NULL;
+            continue;
+        }
+
         values[i].type = table->columns[i].type;
 
         int ok;
@@ -393,10 +461,12 @@ static int read_database(Reader *r, Database *db) {
     if (!read_uint(r, 4, &version)) {
         return 0;
     }
-    if (version != FORMAT_VERSION) {
-        return read_fail(r, "unsupported file version %llu (expected %d)",
+    if (version < 1 || version > FORMAT_VERSION) {
+        return read_fail(r,
+                         "unsupported file version %llu (expected 1 to %d)",
                          (unsigned long long)version, FORMAT_VERSION);
     }
+    r->version = version;
 
     if (!read_uint(r, 4, &table_count)) {
         return 0;
@@ -430,7 +500,7 @@ int database_load(Database *db, const char *path,
         return fail(error, error_size, "%s", strerror(errno));
     }
 
-    Reader r = { file, 0, error, error_size };
+    Reader r = { file, 0, 0, error, error_size };
     int ok = 1;
 
     // The file's size bounds every length in it, so a corrupt length
