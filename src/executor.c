@@ -155,6 +155,22 @@ static int row_matches(const Row *row, const Filter *filter) {
     return !filter || condition_matches(filter, row, filter->root);
 }
 
+// Sets *index to the position of the column called name in table, the
+// position of its value in each row. Every name the SQL uses is looked
+// up this way once, before any row is read.
+static int find_column(const Table *table, const char *name,
+                       size_t *index, char *error, size_t error_size) {
+    int found = table_find_column(table, name);
+
+    if (found < 0) {
+        snprintf(error, error_size, "no such column '%s'", name);
+        return 0;
+    }
+
+    *index = (size_t)found;
+    return 1;
+}
+
 // Checks every comparison in where against table and fills filter.
 // Done before any row is read, so a bad column or type is reported
 // even when no row would reach that part of the condition.
@@ -169,10 +185,9 @@ static int resolve_filter(const Table *table, const WhereClause *where,
         }
 
         const Comparison *cmp = &where->conditions[i].as.compare;
-        int index = table_find_column(table, cmp->column);
+        size_t index;
 
-        if (index < 0) {
-            snprintf(error, error_size, "no such column '%s'", cmp->column);
+        if (!find_column(table, cmp->column, &index, error, error_size)) {
             return 0;
         }
 
@@ -185,7 +200,7 @@ static int resolve_filter(const Table *table, const WhereClause *where,
             return 0;
         }
 
-        filter->columns[i] = (size_t)index;
+        filter->columns[i] = index;
     }
 
     return 1;
@@ -357,12 +372,14 @@ static int compute_aggregate(const Aggregate *agg, size_t column,
 //          3 |       41
 //   (1 row)
 //
-// columns holds the table column each aggregate reads. With show_row 0
-// (LIMIT 0) the headings print but the row doesn't.
+// columns holds the table column each aggregate reads, as filled by
+// resolve_aggregates. There's only one result row, so ORDER BY has
+// nothing to sort and LIMIT matters only when it's 0: then the headings
+// print but the row doesn't.
 static int print_aggregates(const SelectStatement *select,
                             const size_t *columns,
                             const Row *const *rows, size_t count,
-                            int show_row, char *error, size_t error_size) {
+                            char *error, size_t error_size) {
     int n = select->aggregate_count;
     // Room for the longest function name, the column name, "(", ")".
     char headings[MAX_COLUMNS][MAX_TOKEN_LENGTH + 8];
@@ -391,124 +408,122 @@ static int print_aggregates(const SelectStatement *select,
     // out like any other.
     Row result = { values, (size_t)n };
     const Row *result_rows[] = { &result };
+    int show_row = !select->has_limit || select->limit > 0;
 
     print_rows(names, positions, n, result_rows, show_row ? 1 : 0);
     return 1;
 }
 
-static int execute_select(Database *db, const Statement *stmt,
-                          char *error, size_t error_size) {
-    const SelectStatement *select = &stmt->as.select;
-    const Table *table = database_find_table(db, stmt->table_name);
-
-    if (!table) {
-        snprintf(error, error_size, "no such table '%s'", stmt->table_name);
-        return 0;
-    }
-
-    // Resolve every name before printing anything, so a bad column
-    // gives an error rather than half a result.
-    size_t columns[MAX_COLUMNS];
-    int column_count;
-
+// Fills columns with the table column for each selected column, all of
+// them for SELECT *, and sets *column_count.
+static int resolve_columns(const Table *table, const SelectStatement *select,
+                           size_t *columns, int *column_count,
+                           char *error, size_t error_size) {
     if (select->select_all) {
-        column_count = (int)table->column_count;
-        for (int i = 0; i < column_count; i++) {
+        *column_count = (int)table->column_count;
+        for (int i = 0; i < *column_count; i++) {
             columns[i] = (size_t)i;
         }
-    } else if (select->has_aggregates) {
-        // Here columns holds the column each aggregate reads.
-        column_count = select->aggregate_count;
-        for (int i = 0; i < column_count; i++) {
-            const Aggregate *agg = &select->aggregates[i];
-
-            if (agg->func == AGG_COUNT) {
-                columns[i] = 0;  // COUNT(*) reads no column.
-                continue;
-            }
-
-            int index = table_find_column(table, agg->column);
-
-            if (index < 0) {
-                snprintf(error, error_size, "no such column '%s'",
-                         agg->column);
-                return 0;
-            }
-
-            const Column *column = &table->columns[index];
-            if (agg->func == AGG_SUM && column->type != TYPE_INT) {
-                snprintf(error, error_size,
-                         "SUM needs an INT column but '%s' is %s",
-                         column->name, data_type_name(column->type));
-                return 0;
-            }
-            columns[i] = (size_t)index;
-        }
-    } else {
-        column_count = select->column_count;
-        for (int i = 0; i < column_count; i++) {
-            int index = table_find_column(table, select->columns[i]);
-
-            if (index < 0) {
-                snprintf(error, error_size, "no such column '%s'",
-                         select->columns[i]);
-                return 0;
-            }
-            columns[i] = (size_t)index;
-        }
+        return 1;
     }
 
-    Filter filter;
-
-    if (select->has_where &&
-        !resolve_filter(table, &select->where, &filter, error, error_size)) {
-        return 0;
-    }
-
-    int order_column = -1;
-
-    if (select->has_order) {
-        order_column = table_find_column(table, select->order_column);
-
-        if (order_column < 0) {
-            snprintf(error, error_size, "no such column '%s'",
-                     select->order_column);
+    *column_count = select->column_count;
+    for (int i = 0; i < *column_count; i++) {
+        if (!find_column(table, select->columns[i], &columns[i],
+                         error, error_size)) {
             return 0;
         }
     }
 
-    // Collect the matching rows, so they can be sorted and cut to the
-    // limit before printing. Pointers, not copies: the rows stay put.
-    const Row **rows = malloc(table->row_count * sizeof(*rows));
+    return 1;
+}
+
+// Fills columns with the table column each aggregate reads, checking
+// that SUM is given an INT column.
+static int resolve_aggregates(const Table *table,
+                              const SelectStatement *select,
+                              size_t *columns,
+                              char *error, size_t error_size) {
+    for (int i = 0; i < select->aggregate_count; i++) {
+        const Aggregate *agg = &select->aggregates[i];
+
+        if (agg->func == AGG_COUNT) {
+            columns[i] = 0;  // COUNT(*) reads no column.
+            continue;
+        }
+
+        if (!find_column(table, agg->column, &columns[i],
+                         error, error_size)) {
+            return 0;
+        }
+
+        const Column *column = &table->columns[columns[i]];
+        if (agg->func == AGG_SUM && column->type != TYPE_INT) {
+            snprintf(error, error_size,
+                     "SUM needs an INT column but '%s' is %s",
+                     column->name, data_type_name(column->type));
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
+// Sets *order_column to the ORDER BY column, or -1 if there's none.
+static int resolve_order_by(const Table *table,
+                            const SelectStatement *select, int *order_column,
+                            char *error, size_t error_size) {
+    *order_column = -1;
+
+    if (!select->has_order) {
+        return 1;
+    }
+
+    size_t index;
+
+    if (!find_column(table, select->order_column, &index,
+                     error, error_size)) {
+        return 0;
+    }
+
+    *order_column = (int)index;
+    return 1;
+}
+
+// Sets *rows to a new array of pointers to the rows filter matches, in
+// table order, and *count to how many there are. Pointers, not copies:
+// the rows stay put. The caller frees *rows.
+static int collect_rows(const Table *table, const Filter *filter,
+                        const Row ***rows, size_t *count,
+                        char *error, size_t error_size) {
+    *rows = malloc(table->row_count * sizeof(**rows));
 
     // malloc(0) may return NULL, which isn't a failure.
-    if (!rows && table->row_count > 0) {
+    if (!*rows && table->row_count > 0) {
         snprintf(error, error_size, "out of memory");
         return 0;
     }
 
-    const Filter *f = select->has_where ? &filter : NULL;
-    size_t count = 0;
-
+    *count = 0;
     for (size_t r = 0; r < table->row_count; r++) {
-        if (row_matches(&table->rows[r], f)) {
-            rows[count++] = &table->rows[r];
+        if (row_matches(&table->rows[r], filter)) {
+            (*rows)[(*count)++] = &table->rows[r];
         }
     }
 
-    // Aggregates read every matching row and give one result row, so
-    // ORDER BY has nothing to sort and LIMIT only matters when it's 0.
-    if (select->has_aggregates) {
-        int show_row = !select->has_limit || select->limit > 0;
-        int ok = print_aggregates(select, columns, rows, count, show_row,
-                                  error, error_size);
-        free(rows);
-        return ok;
-    }
+    return 1;
+}
 
+// Sorts rows by order_column (if not -1), cuts them to the LIMIT and
+// prints the chosen columns.
+static void print_sorted_rows(const Table *table,
+                              const SelectStatement *select,
+                              const size_t *columns, int column_count,
+                              int order_column,
+                              const Row **rows, size_t count) {
     // Skipped for under two rows; rows may be NULL, which qsort doesn't
     // allow even with nothing to sort.
-    if (select->has_order && count > 1) {
+    if (order_column >= 0 && count > 1) {
         sort_by.column = (size_t)order_column;
         sort_by.descending = select->descending;
         qsort(rows, count, sizeof(*rows), compare_rows);
@@ -525,8 +540,58 @@ static int execute_select(Database *db, const Statement *stmt,
     }
 
     print_rows(names, columns, column_count, rows, count);
+}
+
+static int execute_select(Database *db, const Statement *stmt,
+                          char *error, size_t error_size) {
+    const SelectStatement *select = &stmt->as.select;
+    const Table *table = database_find_table(db, stmt->table_name);
+
+    if (!table) {
+        snprintf(error, error_size, "no such table '%s'", stmt->table_name);
+        return 0;
+    }
+
+    // Check every name before reading any row, so a bad query fails
+    // before any work is done or anything is printed.
+    size_t columns[MAX_COLUMNS];
+    int column_count = 0;  // Unused for aggregates.
+    Filter filter;
+    int order_column;
+
+    int ok = select->has_aggregates
+                 ? resolve_aggregates(table, select, columns,
+                                      error, error_size)
+                 : resolve_columns(table, select, columns, &column_count,
+                                   error, error_size);
+
+    if (!ok ||
+        (select->has_where &&
+         !resolve_filter(table, &select->where, &filter,
+                         error, error_size)) ||
+        !resolve_order_by(table, select, &order_column,
+                          error, error_size)) {
+        return 0;
+    }
+
+    const Row **rows;
+    size_t count;
+
+    if (!collect_rows(table, select->has_where ? &filter : NULL,
+                      &rows, &count, error, error_size)) {
+        return 0;
+    }
+
+    if (select->has_aggregates) {
+        ok = print_aggregates(select, columns, rows, count,
+                              error, error_size);
+    } else {
+        print_sorted_rows(table, select, columns, column_count,
+                          order_column, rows, count);
+    }
+
     free(rows);
-    return 1;
+    return ok;
 }
 
 static int execute_delete(Database *db, const Statement *stmt,
@@ -583,11 +648,9 @@ static int execute_update(Database *db, const Statement *stmt,
 
     for (int i = 0; i < update->assignment_count; i++) {
         const Assignment *assign = &update->assignments[i];
-        int index = table_find_column(table, assign->column);
+        size_t index;
 
-        if (index < 0) {
-            snprintf(error, error_size, "no such column '%s'",
-                     assign->column);
+        if (!find_column(table, assign->column, &index, error, error_size)) {
             return 0;
         }
 
@@ -601,14 +664,14 @@ static int execute_update(Database *db, const Statement *stmt,
         }
 
         for (int j = 0; j < i; j++) {
-            if (columns[j] == (size_t)index) {
+            if (columns[j] == index) {
                 snprintf(error, error_size, "column '%s' is set twice",
                          column->name);
                 return 0;
             }
         }
 
-        columns[i] = (size_t)index;
+        columns[i] = index;
         values[i] = literal_to_value(&assign->value);
     }
 
