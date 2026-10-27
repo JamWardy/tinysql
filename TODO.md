@@ -21,11 +21,29 @@ Done:
       `WHERE id = 5` uses instead of reading every row (file format
       version 4)
 
-Next, roughly in order:
+Next, roughly in order, towards a toy online shop (see "Goal" below):
+
+- [ ] Return results as data rather than printing them, so other
+      programs can use TinySQL as a library
+- [ ] `''` inside a string for a quote, as in `'Men''s Shoes'`
+- [ ] `UNIQUE`, for logging in by email; see "Keys and constraints"
+      below
+- [ ] Parameters: `WHERE email = ?`, with the values passed separately
+- [ ] Arithmetic in `SET` and `WHERE`: `SET stock = stock - 2 WHERE
+      stock >= 2`, and `SUM(quantity * unit_price_cents)`
+- [ ] Transactions: `BEGIN`, `COMMIT` and `ROLLBACK`
+- [ ] IDs: `AUTOINCREMENT`, with a way to get the new ID back
+- [ ] `CREATE INDEX` on columns that aren't a key, such as
+      `orders.user_id`
+
+Later, nice but not needed for the shop:
 
 - [ ] DELETE in one pass (see below)
-- [ ] `UNIQUE`, then foreign keys (`REFERENCES`); see "Keys and
-      constraints" below
+- [ ] Foreign keys (`REFERENCES`); see "Keys and constraints" below
+- [ ] `OFFSET`, for page 2 of a list
+- [ ] `LIKE`, for searching product names
+- [ ] `GROUP BY`, for totals per category
+- [ ] `JOIN`; until then the server runs one query per table
 
 Smaller tidy-ups:
 
@@ -33,6 +51,50 @@ Smaller tidy-ups:
       out of `not_condition`, whose name suggests it's always a NOT
 - [ ] `compile_commands.json` (git-ignored), so clangd jumps from a
       call to the function body
+
+## Goal: a toy online shop
+
+The aim is a small web server for an online shop, storing its data in
+TinySQL. This folder is only the database. The web server, its HTTP API
+and everything else about the shop will live in a parent folder that
+uses TinySQL as a library, so none of that is built here. The list
+above is what the database needs for the shop to work.
+
+`seed/retail.sql` has the tables: users, categories, products,
+addresses, orders, order_items, payments and reviews. Prices are INT
+pence, and dates are TEXT like `'2026-01-15'`, which sorts in date
+order, so neither needs a new type.
+
+What already works: a product page by its key, products in a category
+sorted by price with `LIMIT`, and a basket as `cart_items` with
+`PRIMARY KEY (user_id, product_id)`.
+
+Why each item in the list is needed:
+
+- **Results as data.** `execute` prints with `printf`, so only the REPL
+  can use it. Instead it should fill a result (column names, then rows
+  of `Value`s) for the REPL to print, as `select_rows` fills rows for
+  `print_rows`. The server in the parent folder can then link
+  TinySQL in as a library, as programs do with SQLite.
+- **`''` in strings.** The tokeniser ends a string at the first `'`, so
+  `Men's Shoes` can't be stored.
+- **`UNIQUE`.** Two accounts mustn't share an email, and logging in
+  looks one up, which the index makes fast.
+- **Parameters.** Building SQL from what a visitor types lets them write
+  SQL of their own (SQL injection). With `?`, a value can only ever be a
+  value.
+- **Arithmetic.** Checkout lowers the stock, but only if there's
+  enough: `UPDATE products SET stock = stock - 2 WHERE id = 5 AND
+  stock >= 2`. Today `SET` and comparisons only take a literal.
+- **Transactions.** Checkout is several statements: the order, its
+  items, the stock and the payment. If one fails, none should happen.
+  Since the database is in memory and saved whole, `BEGIN` can stop
+  saving, `COMMIT` save, and `ROLLBACK` reload the file.
+- **IDs.** Without them, the server takes `MAX(id) + 1`, and two
+  requests at once can get the same ID. It also needs the new order's
+  ID to add its items.
+- **`CREATE INDEX`.** "My orders" is `WHERE user_id = ?`, which reads
+  every order without one. It reuses `index.c`.
 
 ## DELETE: remove matching rows in one pass
 
