@@ -22,7 +22,8 @@ Next, roughly in order:
 
 - [ ] DELETE in one pass (see below)
 - [ ] Primary key, then a hash index so `WHERE id = 5` doesn't scan
-      every row
+      every row (see "Keys and constraints" below)
+- [ ] `UNIQUE` and foreign keys (`REFERENCES`)
 
 Smaller tidy-ups:
 
@@ -53,3 +54,78 @@ size_t table_delete_rows(Table *table,
 ```
 
 `table_delete_row` can then go, unless something else needs it.
+
+## Keys and constraints: one list per table
+
+`PRIMARY KEY`, `UNIQUE` and `REFERENCES` must work across several
+columns as well as one, e.g. `order_items` keyed on the pair:
+
+```sql
+CREATE TABLE order_items (order_id INT, product_id INT, quantity INT,
+                          PRIMARY KEY (order_id, product_id));
+```
+
+That constraint belongs to the pair, not to either column: `UNIQUE` on
+each column alone would mean something stricter. So these constraints
+can't be per-column flags like `NOT NULL`. Each table instead keeps a
+list of constraints, each naming its columns; a single-column constraint
+is a list of one. PostgreSQL's `pg_constraint` works the same way.
+
+```c
+typedef enum {
+    CONSTRAINT_PRIMARY_KEY,
+    CONSTRAINT_UNIQUE,
+    CONSTRAINT_REFERENCES
+} ConstraintKind;
+
+typedef struct {
+    ConstraintKind kind;
+    size_t columns[MAX_COLUMNS];  // Positions in the table, in key order.
+    size_t column_count;
+    // For REFERENCES only: the parent table, by name because a Table *
+    // moves when tables are created or dropped, and the parent's key
+    // columns, one per entry in columns. Column positions never change
+    // (there's no ALTER TABLE), so indexes are safe there.
+    char *ref_table;
+    size_t ref_columns[MAX_COLUMNS];
+} Constraint;
+```
+
+Both SQL forms fill the same list:
+
+```sql
+CREATE TABLE users (id INT PRIMARY KEY, email TEXT UNIQUE);   -- column
+CREATE TABLE users (id INT, email TEXT, PRIMARY KEY (id));    -- table
+```
+
+In the file (a new format version), after a table's columns:
+
+```
+u8 constraint_count
+per constraint: u8 kind  u8 column_count  per column: u8 index
+                if REFERENCES: string ref_table
+                               per column: u8 ref_index
+```
+
+`NOT NULL` stays a column flag, since it's only ever about one column.
+`PRIMARY KEY` implies `NOT NULL` on each of its columns; set the flags
+when the table is created, so the existing NULL checks cover it.
+
+The loader checks, as for everything in the file: column indexes are in
+range and not repeated within a constraint, at most one `PRIMARY KEY`,
+and for `REFERENCES` that the parent table and columns exist, the types
+match and the parent columns are its `PRIMARY KEY` or `UNIQUE`. Parent
+tables can come later in the file, so check references after every
+table is read.
+
+Enforcement is most of the work, not the format:
+
+- `PRIMARY KEY` and `UNIQUE` need a hash index over the key columns,
+  hashing them together, or every `INSERT` and `UPDATE` scans the table.
+  The index is rebuilt on load, not stored.
+- `REFERENCES` is checked on `INSERT` and `UPDATE` of the child, and on
+  `DELETE`, `UPDATE` of the key and `DROP TABLE` of the parent. Refuse
+  these at first (`RESTRICT`); `ON DELETE CASCADE` can come later.
+- A key with a `NULL` in any column isn't checked, as in standard SQL:
+  `UNIQUE` allows several such rows, and `REFERENCES` doesn't need a
+  matching parent.
