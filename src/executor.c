@@ -7,6 +7,29 @@
 
 #include "error.h"
 
+// Returns the table called name, or NULL after writing an error.
+static Table *find_table(const Database *db, const char *name,
+                         char *error, size_t error_size) {
+    Table *table = database_find_table(db, name);
+
+    if (!table) {
+        fail(error, error_size, "no such table '%s'", name);
+    }
+    return table;
+}
+
+// Checks that a value of type given can go in column. what names the
+// value in the error, e.g. "value" or "WHERE value".
+static int check_type(const Column *column, DataType given, const char *what,
+                      char *error, size_t error_size) {
+    if (given != column->type) {
+        return fail(error, error_size, "column '%s' is %s but the %s is %s",
+                    column->name, data_type_name(column->type), what,
+                    data_type_name(given));
+    }
+    return 1;
+}
+
 static int execute_create(Database *db, const Statement *stmt,
                           char *error, size_t error_size) {
     const CreateStatement *create = &stmt->as.create;
@@ -53,10 +76,10 @@ static Value literal_to_value(const Literal *lit) {
 static int execute_insert(Database *db, const Statement *stmt,
                           char *error, size_t error_size) {
     const InsertStatement *insert = &stmt->as.insert;
-    Table *table = database_find_table(db, stmt->table_name);
+    Table *table = find_table(db, stmt->table_name, error, error_size);
 
     if (!table) {
-        return fail(error, error_size, "no such table '%s'", stmt->table_name);
+        return 0;
     }
 
     if ((size_t)insert->value_count != table->column_count) {
@@ -69,13 +92,10 @@ static int execute_insert(Database *db, const Statement *stmt,
 
     for (int i = 0; i < insert->value_count; i++) {
         const Literal *lit = &insert->values[i];
-        const Column *column = &table->columns[i];
 
-        if (lit->type != column->type) {
-            return fail(error, error_size,
-                        "column '%s' is %s but the value is %s",
-                        column->name, data_type_name(column->type),
-                        data_type_name(lit->type));
+        if (!check_type(&table->columns[i], lit->type, "value",
+                        error, error_size)) {
+            return 0;
         }
 
         values[i] = literal_to_value(lit);
@@ -165,11 +185,19 @@ static int find_column(const Table *table, const char *name,
     return 1;
 }
 
-// Checks every comparison in where against table and fills filter.
-// Done before any row is read, so a bad column or type is reported
-// even when no row would reach that part of the condition.
-static int resolve_filter(const Table *table, const WhereClause *where,
-                          Filter *filter, char *error, size_t error_size) {
+// Checks every comparison in where against table and fills filter, then
+// sets *out to filter, or to NULL (matching every row) when has_where
+// is 0. Done before any row is read, so a bad column or type is
+// reported even when no row would reach that part of the condition.
+static int resolve_where(const Table *table, int has_where,
+                         const WhereClause *where, Filter *filter,
+                         const Filter **out, char *error, size_t error_size) {
+    *out = NULL;
+
+    if (!has_where) {
+        return 1;
+    }
+
     filter->conditions = where->conditions;
     filter->root = where->root;
 
@@ -185,17 +213,15 @@ static int resolve_filter(const Table *table, const WhereClause *where,
             return 0;
         }
 
-        const Column *column = &table->columns[index];
-        if (cmp->value.type != column->type) {
-            return fail(error, error_size,
-                        "column '%s' is %s but the WHERE value is %s",
-                        column->name, data_type_name(column->type),
-                        data_type_name(cmp->value.type));
+        if (!check_type(&table->columns[index], cmp->value.type,
+                        "WHERE value", error, error_size)) {
+            return 0;
         }
 
         filter->columns[i] = index;
     }
 
+    *out = filter;
     return 1;
 }
 
@@ -535,10 +561,10 @@ static void print_sorted_rows(const Table *table,
 static int execute_select(Database *db, const Statement *stmt,
                           char *error, size_t error_size) {
     const SelectStatement *select = &stmt->as.select;
-    const Table *table = database_find_table(db, stmt->table_name);
+    const Table *table = find_table(db, stmt->table_name, error, error_size);
 
     if (!table) {
-        return fail(error, error_size, "no such table '%s'", stmt->table_name);
+        return 0;
     }
 
     // Check every name before reading any row, so a bad query fails
@@ -546,6 +572,7 @@ static int execute_select(Database *db, const Statement *stmt,
     size_t columns[MAX_COLUMNS];
     int column_count = 0;  // Unused for aggregates.
     Filter filter;
+    const Filter *where;
     int order_column;
 
     int ok = select->has_aggregates
@@ -555,9 +582,8 @@ static int execute_select(Database *db, const Statement *stmt,
                                    error, error_size);
 
     if (!ok ||
-        (select->has_where &&
-         !resolve_filter(table, &select->where, &filter,
-                         error, error_size)) ||
+        !resolve_where(table, select->has_where, &select->where, &filter,
+                       &where, error, error_size) ||
         !resolve_order_by(table, select, &order_column,
                           error, error_size)) {
         return 0;
@@ -566,8 +592,7 @@ static int execute_select(Database *db, const Statement *stmt,
     const Row **rows;
     size_t count;
 
-    if (!collect_rows(table, select->has_where ? &filter : NULL,
-                      &rows, &count, error, error_size)) {
+    if (!collect_rows(table, where, &rows, &count, error, error_size)) {
         return 0;
     }
 
@@ -586,29 +611,29 @@ static int execute_select(Database *db, const Statement *stmt,
 static int execute_delete(Database *db, const Statement *stmt,
                           char *error, size_t error_size) {
     const DeleteStatement *delete = &stmt->as.delete;
-    Table *table = database_find_table(db, stmt->table_name);
+    Table *table = find_table(db, stmt->table_name, error, error_size);
 
     if (!table) {
-        return fail(error, error_size, "no such table '%s'", stmt->table_name);
+        return 0;
     }
 
     // As in SELECT, check the whole WHERE before touching any row, so a
     // bad column can't leave a delete half done.
     Filter filter;
+    const Filter *where;
 
-    if (delete->has_where &&
-        !resolve_filter(table, &delete->where, &filter, error, error_size)) {
+    if (!resolve_where(table, delete->has_where, &delete->where, &filter,
+                       &where, error, error_size)) {
         return 0;
     }
 
-    const Filter *f = delete->has_where ? &filter : NULL;
     size_t deleted = 0;
     size_t r = 0;
 
     // Only move on when the row is kept: deleting shifts the next row
     // into position r.
     while (r < table->row_count) {
-        if (row_matches(&table->rows[r], f)) {
+        if (row_matches(&table->rows[r], where)) {
             table_delete_row(table, r);
             deleted++;
         } else {
@@ -623,10 +648,10 @@ static int execute_delete(Database *db, const Statement *stmt,
 static int execute_update(Database *db, const Statement *stmt,
                           char *error, size_t error_size) {
     const UpdateStatement *update = &stmt->as.update;
-    Table *table = database_find_table(db, stmt->table_name);
+    Table *table = find_table(db, stmt->table_name, error, error_size);
 
     if (!table) {
-        return fail(error, error_size, "no such table '%s'", stmt->table_name);
+        return 0;
     }
 
     // Check every assignment and the WHERE before changing any row.
@@ -641,18 +666,15 @@ static int execute_update(Database *db, const Statement *stmt,
             return 0;
         }
 
-        const Column *column = &table->columns[index];
-        if (assign->value.type != column->type) {
-            return fail(error, error_size,
-                        "column '%s' is %s but the value is %s",
-                        column->name, data_type_name(column->type),
-                        data_type_name(assign->value.type));
+        if (!check_type(&table->columns[index], assign->value.type, "value",
+                        error, error_size)) {
+            return 0;
         }
 
         for (int j = 0; j < i; j++) {
             if (columns[j] == index) {
                 return fail(error, error_size, "column '%s' is set twice",
-                            column->name);
+                            assign->column);
             }
         }
 
@@ -661,19 +683,19 @@ static int execute_update(Database *db, const Statement *stmt,
     }
 
     Filter filter;
+    const Filter *where;
 
-    if (update->has_where &&
-        !resolve_filter(table, &update->where, &filter, error, error_size)) {
+    if (!resolve_where(table, update->has_where, &update->where, &filter,
+                       &where, error, error_size)) {
         return 0;
     }
 
-    const Filter *f = update->has_where ? &filter : NULL;
     size_t updated = 0;
 
     for (size_t r = 0; r < table->row_count; r++) {
         // Each row is tested before any of its values change, and a
         // change to one row can't affect the test on another.
-        if (!row_matches(&table->rows[r], f)) {
+        if (!row_matches(&table->rows[r], where)) {
             continue;
         }
 
@@ -694,10 +716,10 @@ static int execute_update(Database *db, const Statement *stmt,
 
 static int execute_drop(Database *db, const Statement *stmt,
                         char *error, size_t error_size) {
-    Table *table = database_find_table(db, stmt->table_name);
+    Table *table = find_table(db, stmt->table_name, error, error_size);
 
     if (!table) {
-        return fail(error, error_size, "no such table '%s'", stmt->table_name);
+        return 0;
     }
 
     database_drop_table(db, table);
