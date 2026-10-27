@@ -728,17 +728,94 @@ typedef struct {
     size_t count;
 } PositionList;
 
+// Sets equal_to[c] to the value of each `c = value` that the condition
+// at node needs to be true: node itself, or a comparison reached from it
+// through ANDs alone. Under an OR or NOT, no single comparison has to
+// hold, so those are skipped.
+static void find_required_equalities(const Filter *filter, int node,
+                                     const Literal **equal_to) {
+    const Condition *cond = &filter->conditions[node];
+
+    switch (cond->type) {
+        case COND_COMPARE:
+            if (cond->as.compare.op == CMP_EQUAL) {
+                equal_to[filter->columns[node]] = &cond->as.compare.value;
+            }
+            break;
+        case COND_AND:
+            find_required_equalities(filter, cond->as.children.left,
+                                     equal_to);
+            find_required_equalities(filter, cond->as.children.right,
+                                     equal_to);
+            break;
+        case COND_OR:
+        case COND_NOT:
+            break;
+    }
+}
+
+// The key a WHERE pins down: see find_key_lookup.
+typedef struct {
+    const Constraint *constraint;
+    Value values[MAX_COLUMNS];  // Laid out like a row; only the key's set.
+} KeyLookup;
+
+// If filter needs `column = value` for every column of one of table's
+// keys, as `WHERE id = 5` or `WHERE id = 5 AND age > 30` do for the key
+// (id), only the row with that key can match, and the key's index finds
+// it without reading every row. Fills out and returns 1 if so.
+static int find_key_lookup(const Table *table, const Filter *filter,
+                           KeyLookup *out) {
+    const Literal *equal_to[MAX_COLUMNS] = { NULL };
+
+    find_required_equalities(filter, filter->root, equal_to);
+
+    for (size_t c = 0; c < table->constraint_count; c++) {
+        const ColumnList *key = &table->constraints[c].columns;
+        size_t i = 0;
+
+        while (i < key->count && equal_to[key->index[i]]) {
+            size_t column = key->index[i];
+            out->values[column] = literal_to_value(equal_to[column]);
+            i++;
+        }
+
+        if (i == key->count) {
+            out->constraint = &table->constraints[c];
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
 // Fills out with the positions of the rows filter matches, in table
-// order.
+// order, through a key's index when the filter allows it.
 static int collect_positions(const Table *table, const Filter *filter,
                              PositionList *out,
                              char *error, size_t error_size) {
-    out->positions = malloc(table->row_count * sizeof(*out->positions));
+    KeyLookup lookup;
+    int by_key = filter && find_key_lookup(table, filter, &lookup);
+    size_t most = by_key ? 1 : table->row_count;
+
+    out->positions = malloc(most * sizeof(*out->positions));
     out->count = 0;
 
     // malloc(0) may return NULL, which isn't a failure.
-    if (!out->positions && table->row_count > 0) {
+    if (!out->positions && most > 0) {
         return fail(error, error_size, "out of memory");
+    }
+
+    if (by_key) {
+        size_t r;
+
+        // The rest of the WHERE must hold too, as `age > 30` in
+        // `WHERE id = 5 AND age > 30`.
+        if (table_find_key(table, lookup.constraint, lookup.values, &r) &&
+            row_matches(&table->rows[r], filter)) {
+            out->positions[out->count++] = r;
+        }
+        return 1;
     }
 
     for (size_t r = 0; r < table->row_count; r++) {

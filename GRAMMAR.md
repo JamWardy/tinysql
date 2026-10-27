@@ -263,5 +263,17 @@ INSERT INTO users VALUES (1, 'Bob');   -- duplicate primary key ... id = 1
 UPDATE users SET id = 5;               -- fails if users has 2+ rows
 ```
 
-`PRIMARY` and `KEY` are keywords, so they can't be used as table or
-column names.
+The key has an index, so finding a row by its key doesn't read every
+row. A `WHERE` uses it when it needs `column = value` for every key
+column, alone or joined with `AND`:
+
+```sql
+SELECT * FROM users WHERE id = 5;                     -- uses the index
+SELECT * FROM users WHERE id = 5 AND name = 'Ann';    -- uses it too
+SELECT * FROM order_items WHERE order_id = 1 AND product_id = 10;
+SELECT * FROM order_items WHERE order_id = 1;  -- part of the key: reads all
+SELECT * FROM users WHERE id = 5 OR id = 6;    -- OR: reads every row
+```
+
+The same goes for `UPDATE` and `DELETE`. `PRIMARY` and `KEY` are
+keywords, so they can't be used as table or column names.
