@@ -1194,5 +1194,7 @@ int execute(Database *db, const Statement *stmt, Result *result,
         result_free(result);
         return 0;
     }
+
+    result->type = stmt->type;
     return 1;
 }

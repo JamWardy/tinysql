@@ -3,7 +3,7 @@
 
 #include <stddef.h>
 
-#include "parser.h"  // For DataType and MAX_COLUMNS.
+#include "parser.h"  // For DataType, StatementType and MAX_COLUMNS.
 #include "table.h"   // For Value.
 
 // Room for a column name, or an aggregate heading such as "COUNT(name)":
@@ -16,6 +16,8 @@
 // The Result owns copies of its values, so they stay valid however the
 // database changes, until result_free.
 typedef struct {
+    StatementType type;  // The statement that filled it; unset while empty.
+
     char names[MAX_COLUMNS][MAX_HEADING];
     DataType types[MAX_COLUMNS];  // Each column's type; values may be NULL.
     size_t column_count;

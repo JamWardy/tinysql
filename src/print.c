@@ -76,8 +76,8 @@ static void print_changed(size_t count, const char *how) {
     printf("(%zu %s %s)\n", count, count == 1 ? "row" : "rows", how);
 }
 
-void print_result(StatementType type, const Result *result) {
-    switch (type) {
+void print_result(const Result *result) {
+    switch (result->type) {
         case STMT_SELECT:
             print_rows(result);
             break;

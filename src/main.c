@@ -30,7 +30,7 @@ static void run_statement(Database *db, const char *path, const char *sql) {
         return;
     }
 
-    print_result(stmt.type, &result);
+    print_result(&result);
     result_free(&result);
 
     // Rewrite the file after every change, so stopping the program
