@@ -80,7 +80,7 @@ reasoning. In short:
 | Use | When |
 |---|---|
 | Stack | The default, for anything that's only needed until the function returns |
-| Static | Only for something too big for the stack that's reused (`tokens` and `stmt` in `run_statement`), or when a library leaves no other way (`sort_by`, for `qsort`). Comment why |
+| Static | Only for something too big for the stack that's reused (`tokens` and `stmt` in `tinysql_run`), or when a library leaves no other way (`sort_by`, for `qsort`). Comment why |
 | Heap | Data whose size is only known while running, or that outlives the function. Every `malloc` has one clear owner who frees it |
 
 ## Values and types
@@ -148,9 +148,6 @@ reasoning. In short:
 
 ## Not following these yet
 
-Known exceptions, to fix rather than copy:
-
-- `FIXED_ARRAYS_VS_HEAP.md` says `tokens` and `stmt` live in `main`; they
-  moved to `run_statement`.
+Known exceptions, to fix rather than copy. None at the moment.
 
 Remove each line when it's fixed.

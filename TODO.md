@@ -22,11 +22,11 @@ Done:
       version 4)
 - [x] Results as data: `execute` fills a `Result` (column names and
       types, then rows of `Value`s) and the REPL prints it
+- [x] A library: `tinysql_run` in `src/tinysql.h` runs one statement
+      and saves after a change, built into `libtinysql.a`
 
 Next, roughly in order, towards a toy online shop (see "Goal" below):
 
-- [ ] A library entry point, so other programs can use TinySQL as a
-      library
 - [ ] `''` inside a string for a quote, as in `'Men''s Shoes'`
 - [ ] `UNIQUE`, for logging in by email; see "Keys and constraints"
       below
@@ -73,13 +73,6 @@ sorted by price with `LIMIT`, and a basket as `cart_items` with
 
 Why each item in the list is needed:
 
-- **A library entry point.** `execute` now fills a `Result` instead
-  of printing, but a caller still has to tokenise, parse, execute and
-  save after a change itself, as `run_statement` in `main.c` does. One
-  function that does all of that, a public `tinysql.h` and a
-  `libtinysql.a` built without `main.c` would let the server in the
-  parent folder link TinySQL in as a library, as programs do with
-  SQLite.
 - **`''` in strings.** The tokeniser ends a string at the first `'`, so
   `Men's Shoes` can't be stored.
 - **`UNIQUE`.** Two accounts mustn't share an email, and logging in

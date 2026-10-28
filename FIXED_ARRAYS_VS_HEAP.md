@@ -10,7 +10,7 @@ Memory for data involves two independent decisions:
 
 | | **Stack**: lasts until the function returns | **Static**: lasts the whole program | **Heap**: lasts until `free` |
 |---|---|---|---|
-| **Fixed size** | `char input[1024];` in a function. Here: `input` in `main`, the loader's `columns`. | `static TokenList tokens;`. Here: `tokens` and `stmt` in `main`. | `malloc(sizeof(Token))`, a struct with fixed arrays inside. Not used here. |
+| **Fixed size** | `char input[1024];` in a function. Here: `input` in `main`, the loader's `columns`. | `static TokenList tokens;`. Here: `tokens` and `stmt` in `tinysql_run`. | `malloc(sizeof(Token))`, a struct with fixed arrays inside. Not used here. |
 | **Size chosen while running** | `char buf[n];` (a variable-length array). Optional in C11 and risky: a big `n` overflows the stack with no error. Not used here. | Impossible: static memory is laid out before the program starts. | `malloc(length + 1)`. Here: every name, row and text value in storage. |
 
 A fixed-size array lives wherever it's declared, and an array inside a
@@ -22,7 +22,7 @@ opposites.
 Their text sits in fixed-size arrays inside structs: `Token.text`,
 `Statement.table_name`, `ColumnDef.name`, `Literal.as.text` and so on,
 each `MAX_TOKEN_LENGTH` (128) bytes. Those structs live in static memory,
-because `main` declares them as `static TokenList tokens` and
+because `tinysql_run` declares them as `static TokenList tokens` and
 `static Statement stmt`. Storage (`src/table.c`) uses the heap instead.
 
 ## Comparison
