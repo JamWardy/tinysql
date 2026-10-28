@@ -6,7 +6,8 @@ inconvenient. When code breaks a rule on purpose, a comment says why.
 
 Related notes: [FIXED_ARRAYS_VS_HEAP.md](FIXED_ARRAYS_VS_HEAP.md) for
 where memory comes from, [C_LIBRARY.md](C_LIBRARY.md) for the library
-functions we call, and [GRAMMAR.md](GRAMMAR.md) for the SQL we accept.
+functions we call, [GRAMMAR.md](GRAMMAR.md) for the SQL we accept, and
+[INDEXES.md](INDEXES.md) for why the index is a hash and not a B-tree.
 
 ## Functions
 
