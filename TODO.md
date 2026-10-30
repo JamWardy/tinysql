@@ -28,23 +28,39 @@ Done:
 Next, roughly in order, towards a toy online shop (see "Goal" below):
 
 - [ ] `''` inside a string for a quote, as in `'Men''s Shoes'`
-- [ ] `UNIQUE`, for logging in by email; see "Keys and constraints"
-      below
-- [ ] Parameters: `WHERE email = ?`, with the values passed separately
-- [ ] Arithmetic in `SET` and `WHERE`: `SET stock = stock - 2 WHERE
-      stock >= 2`, and `SUM(quantity * unit_price_cents)`
+- [ ] `UNIQUE`, for logging in by email and for an order's
+      `(user_id, idempotency_key)`; see "Keys and constraints" below
+- [ ] Parameters: `WHERE email = ?`, with the values passed separately,
+      in `LIMIT ?` too
+- [ ] `INSERT` with column names, `INSERT INTO users (email,
+      password_hash) VALUES (?, ?)`, so an `AUTOINCREMENT` `id` can be
+      left out
+- [ ] Arithmetic in `SET`: `SET stock = stock - ?`
 - [ ] Transactions: `BEGIN`, `COMMIT` and `ROLLBACK`
+- [ ] `SELECT ... FOR UPDATE`, to lock the item row. The server runs
+      one transaction at a time (see `../DESIGN.md`), so it's accepted
+      and needs nothing more
 - [ ] IDs: `AUTOINCREMENT`, with a way to get the new ID back
-- [ ] `CREATE INDEX` on columns that aren't a key, such as
-      `orders.user_id`
+- [ ] `CREATE INDEX` on columns that aren't a key, ordered (a B-tree),
+      so `orders (item_id, expires_at)` serves `item_id = ? AND
+      expires_at > ?`; a hash index finds only equal values
+- [ ] `LIKE`, for searching item titles
+- [ ] Replication, for search's read replica: the primary sends each
+      committed statement to the replica (see `../DESIGN.md`)
 
 Later, nice but not needed for the shop:
 
 - [ ] DELETE in one pass (see below)
 - [ ] Foreign keys (`REFERENCES`); see "Keys and constraints" below
-- [ ] `OFFSET`, for page 2 of a list
-- [ ] `LIKE`, for searching product names
-- [ ] `GROUP BY`, for totals per category
+- [ ] Threads in the server, so statements from several connections
+      run at once. TinySQL isn't thread-safe yet: statements are parsed
+      into one shared buffer
+- [ ] `SELECT ... FOR UPDATE` with real row locks, as Postgres has, so
+      orders for different items don't wait for each other. Needs an
+      undo log per transaction, as `ROLLBACK` can't reload the file
+      while others are open
+- [ ] `OFFSET`, for page 2 of a list; search pages by `id` instead
+- [ ] `GROUP BY`
 - [ ] `JOIN`; until then the server runs one query per table
 
 Smaller tidy-ups:
@@ -62,36 +78,48 @@ and everything else about the shop will live in a parent folder that
 uses TinySQL as a library, so none of that is built here. The list
 above is what the database needs for the shop to work.
 
-`seed/retail.sql` has the tables: users, categories, products,
-addresses, orders, order_items, payments and reviews. Prices are INT
-pence, and dates are TEXT like `'2026-01-15'`, which sorts in date
-order, so neither needs a new type.
+The shop is designed in `../DESIGN.md`: users, items (listings) and
+orders, with no basket. Its schema and seed data live in `../db/`, not
+here; `seed/retail.sql` and `shop.db` are the old shop's, and get
+deleted. Prices are INT pence, so they need no new type.
 
-What already works: a product page by its key, products in a category
-sorted by price with `LIMIT`, and a basket as `cart_items` with
-`PRIMARY KEY (user_id, product_id)`.
+What already works, with literal values until there are parameters: an
+item by its key, and an order's availability check, `SELECT
+SUM(quantity) FROM orders WHERE item_id = 5 AND status = 'PENDING' AND
+expires_at > 1793000000`.
 
 Why each item in the list is needed:
 
 - **`''` in strings.** The tokeniser ends a string at the first `'`, so
   `Men's Shoes` can't be stored.
 - **`UNIQUE`.** Two accounts mustn't share an email, and logging in
-  looks one up, which the index makes fast.
+  looks one up, which the index makes fast. Two orders mustn't share a
+  user and idempotency key, so two retries arriving at once make one
+  order, not two.
 - **Parameters.** Building SQL from what a visitor types lets them write
   SQL of their own (SQL injection). With `?`, a value can only ever be a
   value.
-- **Arithmetic.** Checkout lowers the stock, but only if there's
-  enough: `UPDATE products SET stock = stock - 2 WHERE id = 5 AND
-  stock >= 2`. Today `SET` and comparisons only take a literal.
-- **Transactions.** Checkout is several statements: the order, its
-  items, the stock and the payment. If one fails, none should happen.
-  Since the database is in memory and saved whole, `BEGIN` can stop
-  saving, `COMMIT` save, and `ROLLBACK` reload the file.
+- **Arithmetic.** Confirming an order lowers the stock: `UPDATE items
+  SET stock = stock - ? WHERE id = ?`. Today `SET` only takes a literal.
+  The row is locked, so the app could read the stock and write the new
+  value instead, but this is one statement, not two.
+- **Transactions.** Reserving is several statements: lock the item,
+  count what's reserved, insert the order. If another order slips in
+  between, the item is oversold. Since the database is in memory and
+  saved whole, `BEGIN` can stop saving, `COMMIT` save, and `ROLLBACK`
+  reload the file.
+- **`FOR UPDATE`.** The design locks the item row while reserving and
+  confirming, so two orders for the last unit can't both see it free.
 - **IDs.** Without them, the server takes `MAX(id) + 1`, and two
-  requests at once can get the same ID. It also needs the new order's
-  ID to add its items.
-- **`CREATE INDEX`.** "My orders" is `WHERE user_id = ?`, which reads
-  every order without one. It reuses `index.c`.
+  requests at once can get the same ID. The new order's ID also goes
+  back to the client.
+- **`CREATE INDEX`.** The availability check is `WHERE item_id = ? AND
+  expires_at > ?` on every order, which reads them all without one. The
+  `>` needs the index in order, which `index.c`'s hash isn't.
+- **`LIKE`.** Search finds items whose title contains the term:
+  `title LIKE ?`, with `'%shoe%'` as the value.
+- **Replication.** Search reads a replica, so search load never slows
+  ordering. The replica may be a few seconds behind.
 
 ## DELETE: remove matching rows in one pass
 
