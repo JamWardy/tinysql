@@ -28,6 +28,10 @@ Done:
 Next, roughly in order, towards a toy online shop (see "Goal" below):
 
 - [ ] `''` inside a string for a quote, as in `'Men''s Shoes'`
+- [ ] `--` comments, to the end of the line, outside strings. The
+      tokeniser skips them, and `ends_statement` in `input.c` looks for
+      the `;` before a comment, so `DROP TABLE t; -- old` still ends
+      the statement
 - [ ] `UNIQUE`, for logging in by email and for an order's
       `(user_id, idempotency_key)`; see "Keys and constraints" below
 - [ ] Parameters: `WHERE email = ?`, with the values passed separately,
@@ -37,16 +41,18 @@ Next, roughly in order, towards a toy online shop (see "Goal" below):
       left out
 - [ ] Arithmetic in `SET`: `SET stock = stock - ?`
 - [ ] Transactions: `BEGIN`, `COMMIT` and `ROLLBACK`
-- [ ] `SELECT ... FOR UPDATE`, to lock the item row. The server runs
-      one transaction at a time (see `../DESIGN.md`), so it's accepted
-      and needs nothing more
+- [ ] `SELECT ... FOR UPDATE`, to lock the item row. Accepted and
+      needs nothing more, as the server runs one transaction at a time
 - [ ] IDs: `AUTOINCREMENT`, with a way to get the new ID back
 - [ ] `CREATE INDEX` on columns that aren't a key, ordered (a B-tree),
       so `orders (item_id, expires_at)` serves `item_id = ? AND
       expires_at > ?`; a hash index finds only equal values
 - [ ] `LIKE`, for searching item titles
-- [ ] Replication, for search's read replica: the primary sends each
-      committed statement to the replica (see `../DESIGN.md`)
+- [ ] A server that links `libtinysql.a`, with a wire protocol for
+      statements, parameters and results, as `../DESIGN.md` describes
+      it under "Key decisions"
+- [ ] Replication, for search's read replica, as `../DESIGN.md`
+      describes it
 
 Later, nice but not needed for the shop:
 
@@ -61,7 +67,7 @@ Later, nice but not needed for the shop:
       while others are open
 - [ ] `OFFSET`, for page 2 of a list; search pages by `id` instead
 - [ ] `GROUP BY`
-- [ ] `JOIN`; until then the server runs one query per table
+- [ ] `JOIN`; until then the services run one query per table
 
 Smaller tidy-ups:
 
@@ -72,16 +78,16 @@ Smaller tidy-ups:
 
 ## Goal: a toy online shop
 
-The aim is a small web server for an online shop, storing its data in
-TinySQL. This folder is only the database. The web server, its HTTP API
-and everything else about the shop will live in a parent folder that
-uses TinySQL as a library, so none of that is built here. The list
-above is what the database needs for the shop to work.
+The aim is an online shop storing its data in TinySQL. This folder is
+only the database. TinySQL gets a server, a program that links
+`libtinysql.a` and runs the statements clients send it over a socket.
+The shop's services live in the parent folder and talk to that server,
+as an app talks to Postgres, so none of the shop is built here. The
+list above is what the database needs for the shop to work.
 
-The shop is designed in `../DESIGN.md`: users, items (listings) and
-orders, with no basket. Its schema and seed data live in `../db/`, not
-here; `seed/retail.sql` and `shop.db` are the old shop's, and get
-deleted. Prices are INT pence, so they need no new type.
+The shop is designed in `../DESIGN.md`. Its schema and seed data live
+in `../db/`, not here; `seed/retail.sql` and `shop.db` are the old
+shop's, and get deleted.
 
 What already works, with literal values until there are parameters: an
 item by its key, and an order's availability check, `SELECT
@@ -92,6 +98,8 @@ Why each item in the list is needed:
 
 - **`''` in strings.** The tokeniser ends a string at the first `'`, so
   `Men's Shoes` can't be stored.
+- **Comments.** `../db/schema.sql` has them, as the schema in
+  `../DESIGN.md` does. Today `--` is read as two minus signs.
 - **`UNIQUE`.** Two accounts mustn't share an email, and logging in
   looks one up, which the index makes fast. Two orders mustn't share a
   user and idempotency key, so two retries arriving at once make one
@@ -118,6 +126,8 @@ Why each item in the list is needed:
   `>` needs the index in order, which `index.c`'s hash isn't.
 - **`LIKE`.** Search finds items whose title contains the term:
   `title LIKE ?`, with `'%shoe%'` as the value.
+- **A server.** The services talk to TinySQL over a socket; see
+  `../DESIGN.md` for why.
 - **Replication.** Search reads a replica, so search load never slows
   ordering. The replica may be a few seconds behind.
 
@@ -149,11 +159,13 @@ size_t table_delete_rows(Table *table,
 ## Keys and constraints: one list per table
 
 `PRIMARY KEY`, `UNIQUE` and `REFERENCES` must work across several
-columns as well as one, e.g. `order_items` keyed on the pair:
+columns as well as one, e.g. an order's idempotency key is unique per
+user:
 
 ```sql
-CREATE TABLE order_items (order_id INT, product_id INT, quantity INT,
-                          PRIMARY KEY (order_id, product_id));
+CREATE TABLE orders (id INT PRIMARY KEY, user_id INT,
+                     idempotency_key TEXT,
+                     UNIQUE (user_id, idempotency_key));
 ```
 
 That constraint belongs to the pair, not to either column: `UNIQUE` on
@@ -183,7 +195,7 @@ Mostly a new kind, as it works like `PRIMARY KEY` with two differences:
 - A table can have several. `find_key_lookup` already tries every
   constraint, so a `WHERE` on any of them would use its index.
 
-### Then: REFERENCES
+### Later: REFERENCES
 
 Each constraint also needs its parent table, by name because a
 `Table *` moves when tables are created or dropped, and the parent's key
