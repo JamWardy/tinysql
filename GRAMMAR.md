@@ -74,6 +74,7 @@ CREATE TABLE order_items (order_id INT, product_id INT, quantity INT,
 INSERT INTO users VALUES (1, 'Alice', 25);
 INSERT INTO users VALUES (-3, 'Eve', 30);
 INSERT INTO users VALUES (2, NULL, NULL);    -- any column can be NULL
+INSERT INTO users VALUES (4, 'O''Brien', 40);  -- '' is one quote
 SELECT * FROM users;
 SELECT name, age FROM users;
 SELECT * FROM users WHERE age >= 18;
@@ -104,9 +105,10 @@ CREATE TABLE t (a INT PRIMARY KEY, b INT PRIMARY KEY);  -- one key a table
 CREATE TABLE t (a INT, PRIMARY KEY a);   -- key columns go in ( )
 CREATE TABLE t (PRIMARY KEY (a));        -- needs at least one column
 INSERT INTO users VALUES (1, 2,);  -- trailing comma
-INSERT INTO users VALUES (--1);    -- only one '-'
+INSERT INTO users VALUES (- -1);   -- only one '-'
 INSERT INTO users VALUES (-'a');   -- '-' only before a number
 INSERT INTO users VALUES (-NULL);  -- or NULL
+INSERT INTO users VALUES (4, 'O'Brien', 40);  -- write the quote as ''
 SELECT * FROM users                -- missing semicolon
 SELECT *, name FROM users;         -- '*' can't be mixed with columns
 SELECT * FROM users; SELECT 1;     -- one statement at a time
@@ -159,6 +161,24 @@ differently. Several `AND`s or `OR`s in a row group from the left.
 
 A `WHERE` can hold at most 64 nodes, counting each comparison, `AND`, `OR`
 and `NOT` as one. Parentheses don't count.
+
+## Strings
+
+A string is written in single quotes. Inside one, two quotes in a row,
+`''`, stand for one quote: `'Men''s Shoes'` is `Men's Shoes`, and
+`''''` is a single `'`. On its own, `''` is the empty string. A string
+holds at most 127 characters, counting each `''` as one.
+
+## Comments
+
+`--` starts a comment, which runs to the end of the line, except inside
+a string: `'a -- b'` is just a string. Comments can go anywhere a space
+can, including after the `;`, so `DROP TABLE users; -- old` is one
+statement. As in Postgres, `--1` is a comment, not two minus signs.
+
+The REPL skips a line holding only a comment, as it does a blank line,
+and a statement ends at a line whose last character outside strings
+and comments is `;`.
 
 ## Comparing values
 

@@ -200,21 +200,42 @@ int tokenise(const char *sql, TokenList *list, char *error, size_t error_size) {
         }
 
         if (sql[i] == '\'') {
-            int start = ++i;
+            char text[MAX_TOKEN_LENGTH];
+            int length = 0;  // Of the string, counting '' as one.
 
-            while (sql[i] != '\0' && sql[i] != '\'') {
+            i++;  // Skip opening quote.
+
+            while (1) {
+                if (sql[i] == '\0') {
+                    return fail(error, error_size, "unterminated string");
+                }
+                if (sql[i] == '\'') {
+                    if (sql[i + 1] != '\'') {
+                        break;
+                    }
+                    i++;  // '' stands for one quote.
+                }
+                // Keep counting once text is full, so add_token rejects it.
+                if (length < MAX_TOKEN_LENGTH) {
+                    text[length] = sql[i];
+                }
+                length++;
                 i++;
             }
 
-            if (sql[i] == '\0') {
-                return fail(error, error_size, "unterminated string");
-            }
-
-            if (!add_token(list, TOKEN_STRING, sql + start, i - start,
+            if (!add_token(list, TOKEN_STRING, text, length,
                            error, error_size)) {
                 return 0;
             }
             i++;  // Skip closing quote.
+            continue;
+        }
+
+        // A comment runs to the end of the line.
+        if (strncmp(sql + i, "--", 2) == 0) {
+            while (sql[i] != '\0' && sql[i] != '\n') {
+                i++;
+            }
             continue;
         }
 

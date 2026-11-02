@@ -24,14 +24,11 @@ Done:
       types, then rows of `Value`s) and the REPL prints it
 - [x] A library: `tinysql_run` in `src/tinysql.h` runs one statement
       and saves after a change, built into `libtinysql.a`
+- [x] `''` inside a string for a quote, as in `'Men''s Shoes'`
+- [x] `--` comments, to the end of the line, outside strings
 
 Next, roughly in order, towards a toy online shop (see "Goal" below):
 
-- [ ] `''` inside a string for a quote, as in `'Men''s Shoes'`
-- [ ] `--` comments, to the end of the line, outside strings. The
-      tokeniser skips them, and `ends_statement` in `input.c` looks for
-      the `;` before a comment, so `DROP TABLE t; -- old` still ends
-      the statement
 - [ ] `UNIQUE`, for logging in by email and for an order's
       `(user_id, idempotency_key)`; see "Keys and constraints" below
 - [ ] Parameters: `WHERE email = ?`, with the values passed separately,
@@ -96,10 +93,6 @@ expires_at > 1793000000`.
 
 Why each item in the list is needed:
 
-- **`''` in strings.** The tokeniser ends a string at the first `'`, so
-  `Men's Shoes` can't be stored.
-- **Comments.** `../db/schema.sql` has them, as the schema in
-  `../DESIGN.md` does. Today `--` is read as two minus signs.
 - **`UNIQUE`.** Two accounts mustn't share an email, and logging in
   looks one up, which the index makes fast. Two orders mustn't share a
   user and idempotency key, so two retries arriving at once make one
