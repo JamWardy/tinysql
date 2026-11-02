@@ -1,8 +1,7 @@
 # Build outputs
 /tinysql
 /libtinysql.a
-*.o
-*.d
+/build/
 *.dSYM/
 
 # Database files

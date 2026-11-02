@@ -17,8 +17,9 @@ EXECUTOR_SRCS = src/executor/executor.c src/executor/common.c \
 # commands.
 APP_SRCS = src/main.c src/input.c src/print.c src/commands.c
 
-LIB_OBJS = $(LIB_SRCS:.c=.o)
-APP_OBJS = $(APP_SRCS:.c=.o)
+# Objects and .d files go in build/, mirroring src/.
+LIB_OBJS = $(LIB_SRCS:src/%.c=build/%.o)
+APP_OBJS = $(APP_SRCS:src/%.c=build/%.o)
 DEPS = $(LIB_OBJS:.o=.d) $(APP_OBJS:.o=.d)
 
 tinysql: $(APP_OBJS) libtinysql.a
@@ -33,11 +34,12 @@ libtinysql.a: $(LIB_OBJS)
 
 # -MMD -MP write a .d file per object listing the headers it includes,
 # so editing a header rebuilds every .c file that uses it.
-src/%.o: src/%.c
+build/%.o: src/%.c
+	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
 clean:
-	rm -f tinysql libtinysql.a $(LIB_OBJS) $(APP_OBJS) $(DEPS)
+	rm -rf tinysql libtinysql.a build
 
 -include $(DEPS)
 
