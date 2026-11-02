@@ -1,5 +1,5 @@
-#ifndef TINYSQL_COMMANDS_H
-#define TINYSQL_COMMANDS_H
+#ifndef TINYSQL_REPL_COMMANDS_H
+#define TINYSQL_REPL_COMMANDS_H
 
 #include "table.h"
 

@@ -1,5 +1,5 @@
-#ifndef TINYSQL_INPUT_H
-#define TINYSQL_INPUT_H
+#ifndef TINYSQL_REPL_INPUT_H
+#define TINYSQL_REPL_INPUT_H
 
 #include <stddef.h>
 

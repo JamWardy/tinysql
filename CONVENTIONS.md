@@ -136,6 +136,9 @@ reasoning. In short:
   goes first. A function shared between files starts with its file's
   name (`where_resolve`, `common_find_table`), except the statements'
   `execute_create`, `execute_select` and so on.
+- **The REPL is a folder**, `src/repl/`: `main.c`, `input.c`,
+  `print.c` and `commands.c`, built into the `tinysql` program and not
+  into `libtinysql.a`. Everything else in `src/` is the library.
 - Build outputs (`.o` and `.d` files) go in `build/`, mirroring `src/`.
 - British spelling in comments, messages, docs and new names
   (`tokeniser`, `behaviour`). Existing names stay as they are.

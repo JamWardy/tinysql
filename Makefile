@@ -1,5 +1,6 @@
 CC ?= cc
-# -Isrc lets files in src/executor/ include src/'s headers by name.
+# -Isrc lets files in src/executor/ and src/repl/ include src/'s headers
+# by name.
 # compile_flags.txt repeats -std and -I for clangd, the editor's checker.
 CFLAGS = -std=c11 -Wall -Wextra -Wpedantic -g -Isrc
 
@@ -15,7 +16,8 @@ EXECUTOR_SRCS = src/executor/executor.c src/executor/common.c \
                 src/executor/update.c src/executor/delete.c
 # The REPL: reading input, printing results and the .tables and .schema
 # commands.
-APP_SRCS = src/main.c src/input.c src/print.c src/commands.c
+APP_SRCS = src/repl/main.c src/repl/input.c src/repl/print.c \
+           src/repl/commands.c
 
 # Objects and .d files go in build/, mirroring src/.
 LIB_OBJS = $(LIB_SRCS:src/%.c=build/%.o)

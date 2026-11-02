@@ -1,5 +1,5 @@
-#ifndef TINYSQL_PRINT_H
-#define TINYSQL_PRINT_H
+#ifndef TINYSQL_REPL_PRINT_H
+#define TINYSQL_REPL_PRINT_H
 
 #include "result.h"
 
