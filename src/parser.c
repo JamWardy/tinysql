@@ -15,6 +15,7 @@
 typedef struct {
     const TokenList *tokens;  // Input, read-only.
     int pos;                  // Index of the next token to read.
+    int param_count;          // `?`s read so far.
     char error[MAX_ERROR];    // Set by the first check that fails.
 } Parser;
 
@@ -67,21 +68,29 @@ static int match(Parser *p, TokenType type) {
 // The only places a Literal is built, so its tag always matches its value.
 static Literal literal_int(long long n) {
     Literal lit;
-    lit.type = TYPE_INT;
+    lit.kind = LITERAL_INT;
     lit.as.integer = n;
     return lit;
 }
 
 static Literal literal_text(const char *text) {
     Literal lit;
-    lit.type = TYPE_TEXT;
+    lit.kind = LITERAL_TEXT;
     copy_text(lit.as.text, sizeof(lit.as.text), text);
     return lit;
 }
 
 static Literal literal_null(void) {
     Literal lit;
-    lit.type = TYPE_NULL;
+    lit.kind = LITERAL_NULL;
+    return lit;
+}
+
+// The next `?` in p's statement.
+static Literal literal_param(Parser *p) {
+    Literal lit;
+    lit.kind = LITERAL_PARAM;
+    lit.as.param = p->param_count++;
     return lit;
 }
 
@@ -95,46 +104,73 @@ const char *data_type_name(DataType type) {
 }
 
 long long literal_as_int(const Literal *lit) {
-    assert(lit->type == TYPE_INT);
+    assert(lit->kind == LITERAL_INT);
     return lit->as.integer;
 }
 
 const char *literal_as_text(const Literal *lit) {
-    assert(lit->type == TYPE_TEXT);
+    assert(lit->kind == LITERAL_TEXT);
     return lit->as.text;
 }
 
-// Records that create has a primary key, of which a table can have only
-// one. Its columns are added after.
-static int start_primary_key(Parser *p, CreateStatement *create) {
-    if (create->has_primary_key) {
-        return fail(p->error, sizeof(p->error),
-                    "a table can have only one PRIMARY KEY");
+const char *constraint_kind_name(ConstraintKind kind) {
+    switch (kind) {
+        case CONSTRAINT_PRIMARY_KEY: return "PRIMARY KEY";
+        case CONSTRAINT_UNIQUE:      return "UNIQUE";
+    }
+    return "UNKNOWN";
+}
+
+// Adds a key of the given kind to create, with no columns yet. A table
+// can have only one PRIMARY KEY. Returns the key, or NULL on failure.
+static KeyDef *start_key(Parser *p, CreateStatement *create,
+                         ConstraintKind kind) {
+    if (kind == CONSTRAINT_PRIMARY_KEY) {
+        for (int i = 0; i < create->key_count; i++) {
+            if (create->keys[i].kind == CONSTRAINT_PRIMARY_KEY) {
+                fail(p->error, sizeof(p->error),
+                     "a table can have only one PRIMARY KEY");
+                return NULL;
+            }
+        }
+    }
+    if (create->key_count == MAX_KEYS) {
+        fail(p->error, sizeof(p->error), "too many keys (max %d)", MAX_KEYS);
+        return NULL;
     }
 
-    create->has_primary_key = 1;
-    create->primary_key_count = 0;
+    KeyDef *key = &create->keys[create->key_count++];
+    key->kind = kind;
+    key->column_count = 0;
+    return key;
+}
+
+static int add_key_column(Parser *p, KeyDef *key, const char *name) {
+    if (key->column_count == MAX_COLUMNS) {
+        return fail(p->error, sizeof(p->error),
+                    "too many %s columns (max %d)",
+                    constraint_kind_name(key->kind), MAX_COLUMNS);
+    }
+
+    copy_text(key->columns[key->column_count],
+              sizeof(key->columns[0]), name);
+    key->column_count++;
     return 1;
 }
 
-static int add_primary_key_column(Parser *p, CreateStatement *create,
-                                  const char *name) {
-    if (create->primary_key_count == MAX_COLUMNS) {
-        return fail(p->error, sizeof(p->error),
-                    "too many PRIMARY KEY columns (max %d)", MAX_COLUMNS);
-    }
+// Adds a key of the given kind on the one column called name.
+static int add_column_key(Parser *p, CreateStatement *create,
+                          ConstraintKind kind, const char *name) {
+    KeyDef *key = start_key(p, create, kind);
 
-    copy_text(create->primary_key[create->primary_key_count],
-              sizeof(create->primary_key[0]), name);
-    create->primary_key_count++;
-    return 1;
+    return key && add_key_column(p, key, name);
 }
 
 // Adds a column to create.
 //
 // column_def        = IDENTIFIER column_type { column_constraint }
 // column_type       = INT | TEXT
-// column_constraint = NOT NULL | PRIMARY KEY
+// column_constraint = NOT NULL | PRIMARY KEY | UNIQUE
 static int parse_column_def(Parser *p, CreateStatement *create) {
     if (create->column_count == MAX_COLUMNS) {
         return fail(p->error, sizeof(p->error),
@@ -166,8 +202,12 @@ static int parse_column_def(Parser *p, CreateStatement *create) {
             out->not_null = 1;
         } else if (match(p, TOKEN_PRIMARY)) {
             if (!expect(p, TOKEN_KEY, "KEY") ||
-                !start_primary_key(p, create) ||
-                !add_primary_key_column(p, create, out->name)) {
+                !add_column_key(p, create, CONSTRAINT_PRIMARY_KEY,
+                                out->name)) {
+                return 0;
+            }
+        } else if (match(p, TOKEN_UNIQUE)) {
+            if (!add_column_key(p, create, CONSTRAINT_UNIQUE, out->name)) {
                 return 0;
             }
         } else {
@@ -181,18 +221,32 @@ static int parse_column_def(Parser *p, CreateStatement *create) {
 
 // A key over one or more columns, after the columns or between them.
 //
-// table_key = PRIMARY KEY LPAREN IDENTIFIER { COMMA IDENTIFIER } RPAREN
+// table_key = ( PRIMARY KEY | UNIQUE )
+//             LPAREN IDENTIFIER { COMMA IDENTIFIER } RPAREN
 static int parse_table_key(Parser *p, CreateStatement *create) {
-    if (!expect(p, TOKEN_PRIMARY, "PRIMARY") ||
-        !expect(p, TOKEN_KEY, "KEY") ||
-        !expect(p, TOKEN_LPAREN, "'('") ||
-        !start_primary_key(p, create)) {
+    ConstraintKind kind = CONSTRAINT_UNIQUE;
+
+    if (match(p, TOKEN_PRIMARY)) {
+        if (!expect(p, TOKEN_KEY, "KEY")) {
+            return 0;
+        }
+        kind = CONSTRAINT_PRIMARY_KEY;
+    } else if (!expect(p, TOKEN_UNIQUE, "PRIMARY or UNIQUE")) {
+        return 0;
+    }
+
+    if (!expect(p, TOKEN_LPAREN, "'('")) {
+        return 0;
+    }
+
+    KeyDef *key = start_key(p, create, kind);
+    if (!key) {
         return 0;
     }
 
     do {
         const Token *column = expect(p, TOKEN_IDENTIFIER, "column name");
-        if (!column || !add_primary_key_column(p, create, column->text)) {
+        if (!column || !add_key_column(p, key, column->text)) {
             return 0;
         }
     } while (match(p, TOKEN_COMMA));
@@ -220,10 +274,11 @@ static int parse_create(Parser *p, Statement *out) {
 
     CreateStatement *create = &out->as.create;
     create->column_count = 0;
-    create->has_primary_key = 0;
+    create->key_count = 0;
 
     do {
-        int ok = peek(p)->type == TOKEN_PRIMARY
+        TokenType next = peek(p)->type;
+        int ok = next == TOKEN_PRIMARY || next == TOKEN_UNIQUE
                      ? parse_table_key(p, create)
                      : parse_column_def(p, create);
         if (!ok) {
@@ -235,7 +290,7 @@ static int parse_create(Parser *p, Statement *out) {
         return 0;
     }
 
-    // Only possible as `CREATE TABLE t (PRIMARY KEY (id))`.
+    // Only possible as `CREATE TABLE t (PRIMARY KEY (id))`, or UNIQUE.
     if (create->column_count == 0) {
         return fail(p->error, sizeof(p->error),
                     "a table needs at least one column");
@@ -246,7 +301,7 @@ static int parse_create(Parser *p, Statement *out) {
     return 1;
 }
 
-// value = [ MINUS ] NUMBER | STRING | NULL
+// value = [ MINUS ] NUMBER | STRING | NULL | PARAM
 static int parse_value(Parser *p, Literal *out) {
     int negative = match(p, TOKEN_MINUS);
     const Token *token = peek(p);
@@ -274,9 +329,11 @@ static int parse_value(Parser *p, Literal *out) {
         *out = literal_text(token->text);
     } else if (token->type == TOKEN_NULL && !negative) {
         *out = literal_null();
+    } else if (token->type == TOKEN_PARAM && !negative) {
+        *out = literal_param(p);
     } else {
         error_expected(p, negative ? "number after '-'"
-                                   : "value (number, 'text' or NULL)");
+                                   : "value (number, 'text', NULL or ?)");
         return 0;
     }
 
@@ -488,8 +545,9 @@ static int parse_comparison(Parser *p, Comparison *out) {
     }
 
     // In SQL, `age = NULL` matches no row, not even one whose age is
-    // NULL. That's a common mistake, so it's an error here instead.
-    if (out->value.type == TYPE_NULL) {
+    // NULL. That's a common mistake, so it's an error here instead. A
+    // `?` whose value is NULL isn't known yet, so it matches no row.
+    if (out->value.kind == LITERAL_NULL) {
         return fail(p->error, sizeof(p->error),
                     "use IS NULL or IS NOT NULL to test for NULL");
     }
@@ -652,7 +710,7 @@ static int parse_order_by(Parser *p, SelectStatement *select,
     return 1;
 }
 
-// [ LIMIT NUMBER ]
+// [ LIMIT ( NUMBER | PARAM ) ]
 static int parse_limit(Parser *p, SelectStatement *select) {
     select->has_limit = match(p, TOKEN_LIMIT);
 
@@ -660,25 +718,33 @@ static int parse_limit(Parser *p, SelectStatement *select) {
         return 1;
     }
 
+    // The executor checks a `?`'s value is an INT and not negative.
+    if (match(p, TOKEN_PARAM)) {
+        select->limit = literal_param(p);
+        return 1;
+    }
+
     // NUMBER is only digits, so a negative LIMIT fails here.
-    const Token *number = expect(p, TOKEN_NUMBER, "number");
+    const Token *number = expect(p, TOKEN_NUMBER, "number or ?");
     if (!number) {
         return 0;
     }
 
     errno = 0;
-    select->limit = strtoll(number->text, NULL, 10);
+    long long limit = strtoll(number->text, NULL, 10);
 
     if (errno == ERANGE) {
         return fail(p->error, sizeof(p->error),
                     "number out of range: %s", number->text);
     }
 
+    select->limit = literal_int(limit);
     return 1;
 }
 
 // select_stmt = SELECT select_list FROM IDENTIFIER [ WHERE condition ]
-//               [ ORDER BY IDENTIFIER [ ASC | DESC ] ] [ LIMIT NUMBER ]
+//               [ ORDER BY IDENTIFIER [ ASC | DESC ] ]
+//               [ LIMIT ( NUMBER | PARAM ) ]
 static int parse_select(Parser *p, Statement *out) {
     SelectStatement *select = &out->as.select;
 
@@ -836,7 +902,7 @@ static int parse_drop(Parser *p, Statement *out) {
 //             | update_stmt | drop_stmt ) SEMICOLON EOF
 int parse(const TokenList *tokens, Statement *out,
           char *error, size_t error_size) {
-    Parser p = { tokens, 0, "" };
+    Parser p = { tokens, 0, 0, "" };
     int ok;
 
     switch (peek(&p)->type) {
@@ -880,5 +946,6 @@ int parse(const TokenList *tokens, Statement *out,
         return 0;
     }
 
+    out->param_count = p.param_count;
     return 1;
 }

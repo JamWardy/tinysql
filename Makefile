@@ -1,11 +1,18 @@
 CC ?= cc
-CFLAGS = -std=c11 -Wall -Wextra -Wpedantic -g
+# -Isrc lets files in src/executor/ include src/'s headers by name.
+# compile_flags.txt repeats -std and -I for clangd, the editor's checker.
+CFLAGS = -std=c11 -Wall -Wextra -Wpedantic -g -Isrc
 
 # The database itself, which other programs link in as libtinysql.a
 # and use through src/tinysql.h.
 LIB_SRCS = src/tinysql.c src/tokeniser.c src/parser.c src/table.c \
-           src/index.c src/executor.c src/result.c src/persist.c \
-           src/error.c src/text.c
+           src/index.c src/result.c src/persist.c src/error.c src/text.c \
+           $(EXECUTOR_SRCS)
+# The executor, one file per statement plus what they share.
+EXECUTOR_SRCS = src/executor/executor.c src/executor/common.c \
+                src/executor/where.c src/executor/schema.c \
+                src/executor/insert.c src/executor/select.c \
+                src/executor/update.c src/executor/delete.c
 # The REPL: reading input, printing results and the .tables and .schema
 # commands.
 APP_SRCS = src/main.c src/input.c src/print.c src/commands.c

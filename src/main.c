@@ -12,7 +12,9 @@ static void run_statement(Database *db, const char *path, const char *sql) {
 
     result_init(&result);
 
-    if (!tinysql_run(db, path, sql, &result, error, sizeof(error))) {
+    // The REPL has no way to give values, so a `?` is an error here.
+    if (!tinysql_run(db, path, sql, NULL, 0, &result,
+                     error, sizeof(error))) {
         printf("Error: %s\n", error);
         return;
     }

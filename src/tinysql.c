@@ -6,13 +6,15 @@
 #include "tokeniser.h"
 
 int tinysql_run(Database *db, const char *path, const char *sql,
+                const Value *params, size_t param_count,
                 Result *result, char *error, size_t error_size) {
     static TokenList tokens;  // Large, so keep these off the stack.
     static Statement stmt;
+    ParamList param_list = { params, param_count };
 
     if (!tokenise(sql, &tokens, error, error_size) ||
         !parse(&tokens, &stmt, error, error_size) ||
-        !execute(db, &stmt, result, error, error_size)) {
+        !execute(db, &stmt, &param_list, result, error, error_size)) {
         return 0;
     }
 

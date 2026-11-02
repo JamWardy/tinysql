@@ -46,13 +46,14 @@ static void print_tables(const Database *db) {
 
 // Prints the CREATE TABLE statement that would make an empty copy of
 // table, e.g. CREATE TABLE users (id INT PRIMARY KEY, name TEXT NOT NULL);
-// A one-column key goes on its column, a longer one after the columns.
+// A one-column key goes on its column, a longer one after the columns,
+// each in the order the table keeps them.
 static void print_create(const Table *table) {
-    const ColumnList *key = NULL;
+    const ColumnList *primary_key = NULL;
 
     for (size_t i = 0; i < table->constraint_count; i++) {
         if (table->constraints[i].kind == CONSTRAINT_PRIMARY_KEY) {
-            key = &table->constraints[i].columns;
+            primary_key = &table->constraints[i].columns;
         }
     }
 
@@ -60,24 +61,37 @@ static void print_create(const Table *table) {
 
     for (size_t i = 0; i < table->column_count; i++) {
         const Column *column = &table->columns[i];
-        int in_key = key && column_list_has(key, i);
 
         printf("%s%s %s", i > 0 ? ", " : "", column->name,
                data_type_name(column->type));
 
         // PRIMARY KEY makes its columns NOT NULL, so that isn't repeated.
-        if (in_key && key->count == 1) {
-            printf(" PRIMARY KEY");
-        } else if (column->not_null && !in_key) {
+        if (column->not_null &&
+            !(primary_key && column_list_has(primary_key, i))) {
             printf(" NOT NULL");
+        }
+
+        for (size_t c = 0; c < table->constraint_count; c++) {
+            const Constraint *constraint = &table->constraints[c];
+
+            if (constraint->columns.count == 1 &&
+                constraint->columns.positions[0] == i) {
+                printf(" %s", constraint_kind_name(constraint->kind));
+            }
         }
     }
 
-    if (key && key->count > 1) {
-        printf(", PRIMARY KEY (");
+    for (size_t c = 0; c < table->constraint_count; c++) {
+        const Constraint *constraint = &table->constraints[c];
+        const ColumnList *key = &constraint->columns;
+
+        if (key->count == 1) {
+            continue;
+        }
+        printf(", %s (", constraint_kind_name(constraint->kind));
         for (size_t i = 0; i < key->count; i++) {
             printf("%s%s", i > 0 ? ", " : "",
-                   table->columns[key->index[i]].name);
+                   table->columns[key->positions[i]].name);
         }
         putchar(')');
     }

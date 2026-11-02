@@ -177,9 +177,11 @@ int table_add_constraint(Table *table, ConstraintKind kind,
             // A key identifies its row, and NULL is no value, so it
             // can't identify anything.
             for (size_t i = 0; i < columns->count; i++) {
-                assert(columns->index[i] < table->column_count);
-                table->columns[columns->index[i]].not_null = 1;
+                assert(columns->positions[i] < table->column_count);
+                table->columns[columns->positions[i]].not_null = 1;
             }
+            break;
+        case CONSTRAINT_UNIQUE:
             break;
     }
     return 1;
@@ -187,7 +189,16 @@ int table_add_constraint(Table *table, ConstraintKind kind,
 
 int column_list_has(const ColumnList *list, size_t column) {
     for (size_t i = 0; i < list->count; i++) {
-        if (list->index[i] == column) {
+        if (list->positions[i] == column) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int key_has_null(const ColumnList *key, const Value *values) {
+    for (size_t i = 0; i < key->count; i++) {
+        if (values[key->positions[i]].type == TYPE_NULL) {
             return 1;
         }
     }
@@ -208,9 +219,9 @@ uint64_t key_hash(const ColumnList *key, const Value *values) {
     uint64_t hash = FNV_OFFSET;
 
     for (size_t i = 0; i < key->count; i++) {
-        const Value *value = &values[key->index[i]];
+        const Value *value = &values[key->positions[i]];
 
-        // A bug in the caller: the key's columns are NOT NULL.
+        // A bug in the caller: keys with a NULL aren't indexed.
         assert(value->type != TYPE_NULL);
 
         if (value->type == TYPE_INT) {
@@ -238,8 +249,8 @@ uint64_t key_hash(const ColumnList *key, const Value *values) {
 
 int key_equal(const ColumnList *key, const Value *a, const Value *b) {
     for (size_t i = 0; i < key->count; i++) {
-        const Value *x = &a[key->index[i]];
-        const Value *y = &b[key->index[i]];
+        const Value *x = &a[key->positions[i]];
+        const Value *y = &b[key->positions[i]];
 
         assert(x->type == y->type && x->type != TYPE_NULL);
 
@@ -269,6 +280,9 @@ int table_find_key(const Table *table, const Constraint *constraint,
                    const Value *values, size_t *row) {
     KeySearch search = { table, &constraint->columns, values };
 
+    if (key_has_null(&constraint->columns, values)) {
+        return 0;
+    }
     return index_find(&constraint->rows_by_key,
                       key_hash(&constraint->columns, values),
                       row_has_key, &search, row);
@@ -316,8 +330,11 @@ int table_append_row(Table *table, const Value *values) {
     for (size_t i = 0; i < table->constraint_count; i++) {
         Constraint *constraint = &table->constraints[i];
 
-        index_insert(&constraint->rows_by_key,
-                     key_hash(&constraint->columns, copy), table->row_count);
+        if (!key_has_null(&constraint->columns, copy)) {
+            index_insert(&constraint->rows_by_key,
+                         key_hash(&constraint->columns, copy),
+                         table->row_count);
+        }
     }
 
     Row *row = &table->rows[table->row_count++];
@@ -345,7 +362,8 @@ int table_set_value(Table *table, size_t row, size_t column,
     for (size_t i = 0; i < table->constraint_count; i++) {
         Constraint *constraint = &table->constraints[i];
 
-        if (column_list_has(&constraint->columns, column)) {
+        if (column_list_has(&constraint->columns, column) &&
+            !key_has_null(&constraint->columns, values)) {
             index_remove(&constraint->rows_by_key,
                          key_hash(&constraint->columns, values), row);
         }
@@ -358,11 +376,14 @@ int table_set_value(Table *table, size_t row, size_t column,
     values_free(slot, 1);
     *slot = copy;
 
-    // Removing the row made room, so these can't fail.
+    // Each index has room for every row, as table_append_row reserved
+    // it, and this row isn't in any it's being added to, so these can't
+    // fail.
     for (size_t i = 0; i < table->constraint_count; i++) {
         Constraint *constraint = &table->constraints[i];
 
-        if (column_list_has(&constraint->columns, column)) {
+        if (column_list_has(&constraint->columns, column) &&
+            !key_has_null(&constraint->columns, values)) {
             index_insert(&constraint->rows_by_key,
                          key_hash(&constraint->columns, values), row);
         }
@@ -381,8 +402,10 @@ void table_delete_row(Table *table, size_t index) {
     for (size_t i = 0; i < table->constraint_count; i++) {
         Constraint *constraint = &table->constraints[i];
 
-        index_remove(&constraint->rows_by_key,
-                     key_hash(&constraint->columns, row->values), index);
+        if (!key_has_null(&constraint->columns, row->values)) {
+            index_remove(&constraint->rows_by_key,
+                         key_hash(&constraint->columns, row->values), index);
+        }
         index_shift_rows(&constraint->rows_by_key, index);
     }
 

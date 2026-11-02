@@ -4,12 +4,18 @@
 #include "tokeniser.h"
 
 #define MAX_COLUMNS 32
+#define MAX_KEYS 8  // Per table, the PRIMARY KEY included.
 
 typedef enum {
     TYPE_INT,
     TYPE_TEXT,
     TYPE_NULL  // Only a value can be NULL; a column is INT or TEXT.
 } DataType;
+
+typedef enum {
+    CONSTRAINT_PRIMARY_KEY,
+    CONSTRAINT_UNIQUE
+} ConstraintKind;
 
 // A column in CREATE TABLE: `name TEXT` or `id INT NOT NULL`.
 typedef struct {
@@ -18,25 +24,38 @@ typedef struct {
     int not_null;  // 1 for NOT NULL.
 } ColumnDef;
 
-// A value written in the SQL: `25`, `'Alice'` or `NULL`. For NULL, as
-// is unused.
+typedef enum {
+    LITERAL_INT,
+    LITERAL_TEXT,
+    LITERAL_NULL,
+    LITERAL_PARAM  // A `?`, whose value is passed separately.
+} LiteralKind;
+
+// A value written in the SQL: `25`, `'Alice'`, `NULL` or `?`. kind says
+// which member of as holds it; NULL has none.
 typedef struct {
-    DataType type;
+    LiteralKind kind;
     union {
         long long integer;
         char text[MAX_TOKEN_LENGTH];
+        int param;  // Which `?`, from 0, left to right in the statement.
     } as;
 } Literal;
+
+// A key in CREATE TABLE: `id INT PRIMARY KEY` or `UNIQUE (user_id,
+// idempotency_key)`. The executor checks the names are columns.
+typedef struct {
+    ConstraintKind kind;
+    char columns[MAX_COLUMNS][MAX_TOKEN_LENGTH];  // In key order.
+    int column_count;
+} KeyDef;
 
 typedef struct {
     ColumnDef columns[MAX_COLUMNS];
     int column_count;
 
-    // `id INT PRIMARY KEY` or `PRIMARY KEY (order_id, product_id)`; the
-    // executor checks the names are columns.
-    int has_primary_key;  // 0: no key, and primary_key is unused.
-    char primary_key[MAX_COLUMNS][MAX_TOKEN_LENGTH];  // In key order.
-    int primary_key_count;
+    KeyDef keys[MAX_KEYS];  // In the order written.
+    int key_count;
 } CreateStatement;
 
 typedef struct {
@@ -127,7 +146,7 @@ typedef struct {
     int descending;  // 1 for DESC; ASC is the default.
 
     int has_limit;   // 1 if there's a LIMIT, otherwise every row.
-    long long limit; // Never negative.
+    Literal limit;   // An INT, never negative, or a `?`.
 } SelectStatement;
 
 typedef struct {
@@ -162,6 +181,7 @@ typedef enum {
 typedef struct {
     StatementType type;
     char table_name[MAX_TOKEN_LENGTH];
+    int param_count;  // How many `?`s, each a LITERAL_PARAM.
     union {
         CreateStatement create;
         InsertStatement insert;
@@ -174,7 +194,10 @@ typedef struct {
 // The type as written in SQL: "INT", "TEXT" or "NULL".
 const char *data_type_name(DataType type);
 
-// Read a Literal's value. The type must match: reading the wrong member
+// The constraint as written in SQL: "PRIMARY KEY" or "UNIQUE".
+const char *constraint_kind_name(ConstraintKind kind);
+
+// Read a Literal's value. The kind must match: reading the wrong member
 // is a programmer error and stops the program.
 long long literal_as_int(const Literal *lit);
 const char *literal_as_text(const Literal *lit);

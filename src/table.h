@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 #include "index.h"
-#include "parser.h"  // For DataType and ColumnDef.
+#include "parser.h"  // For DataType, ColumnDef and ConstraintKind.
 
 // Ownership: a Database owns its Tables, and a Table owns every string
 // and array reachable from it. Functions that take strings or Values copy
@@ -42,20 +42,18 @@ typedef struct {
 // Columns of a table, by position in each row: a key's columns, or the
 // columns a query reads.
 typedef struct {
-    size_t index[MAX_COLUMNS];
+    size_t positions[MAX_COLUMNS];
     size_t count;
 } ColumnList;
 
-typedef enum {
-    CONSTRAINT_PRIMARY_KEY
-} ConstraintKind;
-
 // A rule over one or more columns, e.g. PRIMARY KEY (order_id, product_id).
-// No two rows have the same key: the same values in all its columns.
+// No two rows have the same key: the same values in all its columns. A
+// UNIQUE key with a NULL in any column isn't checked, as in standard
+// SQL, and its row stays out of the index.
 typedef struct {
     ConstraintKind kind;
     ColumnList columns;  // The key's columns, in key order.
-    Index rows_by_key;   // Every row's position, under its key's hash.
+    Index rows_by_key;   // Each row's position, under its key's hash.
 } Constraint;
 
 typedef struct {
@@ -101,15 +99,17 @@ void database_drop_table(Database *db, Table *table);
 int table_find_column(const Table *table, const char *name, size_t *index);
 
 // Adds a constraint over columns, which must be valid, distinct
-// positions. PRIMARY KEY also makes its columns NOT NULL. The table
-// must have no rows yet; nothing checks existing rows against it.
+// positions. PRIMARY KEY also makes its columns NOT NULL; UNIQUE
+// doesn't. The table must have no rows yet; nothing checks existing
+// rows against it.
 // Returns 1, or 0 if memory ran out (table is unchanged).
 int table_add_constraint(Table *table, ConstraintKind kind,
                          const ColumnList *columns);
 
 // Looks for a row with the same key as values. If there is one, sets
-// *row to its position and returns 1; otherwise returns 0. Uses the
-// constraint's index, so it doesn't read every row.
+// *row to its position and returns 1; otherwise returns 0, as it always
+// does for a key with a NULL. Uses the constraint's index, so it doesn't
+// read every row.
 //
 // Here and in key_hash and key_equal, values is laid out like a row,
 // one per column by position, and only the key's columns are read. So a
@@ -119,6 +119,9 @@ int table_find_key(const Table *table, const Constraint *constraint,
 
 // Returns 1 if column is in list.
 int column_list_has(const ColumnList *list, size_t column);
+
+// Returns 1 if any of key's values is NULL. values is laid out like a row.
+int key_has_null(const ColumnList *key, const Value *values);
 
 // The hash of the values in key's columns, for an Index. values is
 // laid out like a row, and none of the key's values may be NULL.

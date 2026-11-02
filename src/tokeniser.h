@@ -22,6 +22,7 @@ typedef enum {
     TOKEN_LESS_EQUAL,
     TOKEN_GREATER,
     TOKEN_GREATER_EQUAL,
+    TOKEN_PARAM,
     TOKEN_CREATE,
     TOKEN_TABLE,
     TOKEN_INSERT,
@@ -52,6 +53,7 @@ typedef enum {
     TOKEN_TEXT,
     TOKEN_PRIMARY,
     TOKEN_KEY,
+    TOKEN_UNIQUE,
     TOKEN_EOF
 } TokenType;
 

@@ -20,8 +20,8 @@ functions we call, [GRAMMAR.md](GRAMMAR.md) for the SQL we accept, and
   as `select_rows` and `execute_update` do. A bad statement then fails
   with nothing half done.
 - **Extract a pattern the third time you write it.** That's how
-  `find_column`, `find_table`, `check_type`, `fail` and `copy_text` came
-  about. Name the helper after what it means, not how it works.
+  `common_find_column`, `common_find_table`, `common_check_type`, `fail`
+  and `copy_text` came about. Name the helper after what it means, not how it works.
 - **`static` unless another file needs it.** A public function goes in
   the header with a comment saying what it does, what it returns and
   what happens on failure.
@@ -33,7 +33,7 @@ A function that can fail does one of two things:
 | It produces | Returns | On failure |
 |---|---|---|
 | A yes or no, or results through out parameters | `int`: 1 for success | Returns 0 after writing a message to `char *error, size_t error_size` |
-| One pointer | The pointer | Returns `NULL`, after writing a message if it takes an `error` buffer (`find_table`) |
+| One pointer | The pointer | Returns `NULL`, after writing a message if it takes an `error` buffer (`common_find_table`) |
 
 - **Write errors with `fail`**, which is one line:
   `return fail(error, error_size, "no such table '%s'", name);`.
@@ -92,7 +92,7 @@ reasoning. In short:
   the value, not a special value such as `-1`. A lookup that may find
   nothing returns 1 or 0 and writes what it found through a pointer, as
   `table_find_column` does. A `NULL` pointer is fine
-  for an optional pointer, such as `resolve_where`'s filter.
+  for an optional pointer, such as `where_resolve`'s filter.
 - **No `default:` in a switch over our own enums.** List every case, so
   the compiler warns about each switch that needs updating when a value
   is added, as happened when `TYPE_NULL` was added. Switches over token
@@ -122,9 +122,20 @@ reasoning. In short:
   `TOKEN_`, `CMP_`).
 - Public functions start with what they act on, where there is one:
   `database_find_table`, `table_append_row`.
-- Header guards are `TINYSQL_<FILE>_H`.
+- Header guards are `TINYSQL_<FILE>_H`, or `TINYSQL_<FOLDER>_<FILE>_H`
+  in a folder.
 - Includes: the file's own header, then `<system>` headers, then
   `"project"` headers, each group alphabetical.
+- **The executor is a folder**, `src/executor/`: one file per statement
+  (`schema.c` for `CREATE` and `DROP`, `insert.c`, `select.c`,
+  `update.c`, `delete.c`), `where.c` for `WHERE`, `common.c` for what
+  most statements share, and `executor.c` for `execute`, which picks
+  the statement's function. `src/executor.h` is the folder's only
+  public header; `internal.h` is shared between the folder's files and
+  is included nowhere else. It counts as each file's own header, so
+  goes first. A function shared between files starts with its file's
+  name (`where_resolve`, `common_find_table`), except the statements'
+  `execute_create`, `execute_select` and so on.
 - British spelling in comments, messages, docs and new names
   (`tokeniser`, `behaviour`). Existing names stay as they are.
 

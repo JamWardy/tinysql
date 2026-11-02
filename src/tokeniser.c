@@ -23,6 +23,7 @@ const char *token_type_name(TokenType type) {
         case TOKEN_LESS_EQUAL:     return "LESS_EQUAL";
         case TOKEN_GREATER:        return "GREATER";
         case TOKEN_GREATER_EQUAL:  return "GREATER_EQUAL";
+        case TOKEN_PARAM:          return "PARAM";
         case TOKEN_CREATE:         return "CREATE";
         case TOKEN_TABLE:          return "TABLE";
         case TOKEN_INSERT:         return "INSERT";
@@ -53,6 +54,7 @@ const char *token_type_name(TokenType type) {
         case TOKEN_TEXT:           return "TEXT";
         case TOKEN_PRIMARY:        return "PRIMARY";
         case TOKEN_KEY:            return "KEY";
+        case TOKEN_UNIQUE:         return "UNIQUE";
         case TOKEN_EOF:            return "EOF";
     }
     return "UNKNOWN";
@@ -94,6 +96,7 @@ static const Keyword keywords[] = {
     { "TEXT",   TOKEN_TEXT },
     { "PRIMARY", TOKEN_PRIMARY },
     { "KEY",    TOKEN_KEY },
+    { "UNIQUE", TOKEN_UNIQUE },
 };
 
 // Compares a word of the given length against an upper-case keyword,
@@ -263,6 +266,7 @@ int tokenise(const char *sql, TokenList *list, char *error, size_t error_size) {
                 case '=': type = TOKEN_EQUAL; break;
                 case '<': type = TOKEN_LESS; break;
                 case '>': type = TOKEN_GREATER; break;
+                case '?': type = TOKEN_PARAM; break;
 
                 default:
                     return fail(error, error_size,

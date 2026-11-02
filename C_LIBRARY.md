@@ -48,7 +48,7 @@ helper. Prefer these to the raw calls.
 | `fprintf(stream, format, ...)` | `printf` to a chosen stream. We use `stderr` for errors before the prompt starts. | `main.c` |
 | `puts(s)` | Prints `s` and a newline. | `commands.c`, `main.c`, `input.c` |
 | `putchar(c)` | Prints one character. | `print.c`, `commands.c` |
-| `snprintf(buf, size, format, ...)` | `printf` into `buf` instead of the terminal. Writes at most `size - 1` characters plus `'\0'`, cutting the text short if needed. Returns the length the full text *would* have had. | `executor.c`, `parser.c`, `print.c` |
+| `snprintf(buf, size, format, ...)` | `printf` into `buf` instead of the terminal. Writes at most `size - 1` characters plus `'\0'`, cutting the text short if needed. Returns the length the full text *would* have had. | `executor/common.c`, `executor/schema.c`, `executor/select.c`, `parser.c`, `print.c` |
 | `vsnprintf(buf, size, format, args)` | `snprintf` taking a `va_list` instead of `...`. It's how one variadic function passes its arguments on to another. | `error.c`, `persist.c` |
 | `fgets(buf, size, stream)` | Reads one line, including its `'\n'`, into `buf`. Stops early if `buf` fills up, leaving the rest of the line unread. Returns `NULL` at end of input. | `input.c` |
 | `getchar()` | Reads one character from stdin. Returns `EOF` at end of input, so the result is an `int`, not a `char`. | `input.c` |
@@ -89,9 +89,9 @@ you. The codes we use:
 | Function | What it does | Used in |
 |---|---|---|
 | `strlen(s)` | Counts the characters before the `'\0'`. | `input.c`, `persist.c`, `print.c`, `table.c`, `text.c` |
-| `strcmp(a, b)` | Compares two strings: 0 if equal, negative if `a` sorts first, positive if `b` does. Always compare the result with 0; `if (strcmp(a, b))` means "if *different*". | `executor.c`, `commands.c`, `persist.c`, `table.c` |
+| `strcmp(a, b)` | Compares two strings: 0 if equal, negative if `a` sorts first, positive if `b` does. Always compare the result with 0; `if (strcmp(a, b))` means "if *different*". | `executor/common.c`, `executor/schema.c`, `commands.c`, `persist.c`, `table.c` |
 | `strncmp(a, b, n)` | `strcmp` on at most the first `n` characters. | `tokeniser.c`, for two-character operators such as `<=` |
-| `memcpy(dest, src, n)` | Copies `n` bytes. Doesn't care about `'\0'`, so it works on any data. `dest` and `src` mustn't overlap. | `text.c`, `table.c`, `persist.c`, `input.c`, `executor.c` |
+| `memcpy(dest, src, n)` | Copies `n` bytes. Doesn't care about `'\0'`, so it works on any data. `dest` and `src` mustn't overlap. | `text.c`, `table.c`, `persist.c`, `input.c`, `executor/update.c` |
 | `memmove(dest, src, n)` | `memcpy` that's safe when they overlap. Used to shift array elements down one place after a removal. | `table.c` |
 | `memset(p, 0, n)` | Sets `n` bytes to zero, e.g. to clear a struct. | `table.c`, `persist.c` |
 | `memcmp(a, b, n)` | `strcmp` for raw bytes: compares exactly `n` bytes, ignoring `'\0'`. | `persist.c`, to check a file starts with `TSQL` |
@@ -102,12 +102,12 @@ you. The codes we use:
 
 | Function | What it does | Used in |
 |---|---|---|
-| `malloc(n)` | Allocates `n` bytes on the heap. Returns `NULL` if memory ran out. The bytes start with whatever was there before. | `executor.c`, `persist.c`, `table.c` |
-| `calloc(count, size)` | Allocates room for `count` items of `size` bytes, all set to zero. | `table.c`, `index.c`, `executor.c` |
+| `malloc(n)` | Allocates `n` bytes on the heap. Returns `NULL` if memory ran out. The bytes start with whatever was there before. | `executor/where.c`, `persist.c`, `table.c` |
+| `calloc(count, size)` | Allocates room for `count` items of `size` bytes, all set to zero. | `table.c`, `index.c`, `executor/update.c` |
 | `realloc(p, n)` | Resizes an allocation. It may move the data, so it returns the new address, and on failure it returns `NULL` but leaves `p` as it was. That's why the result goes into a new variable before replacing the old pointer. | `table.c`, `result.c` |
-| `free(p)` | Gives an allocation back. Using `p` afterwards is a bug. `free(NULL)` does nothing. | `executor.c`, `index.c`, `persist.c`, `result.c`, `table.c` |
+| `free(p)` | Gives an allocation back. Using `p` afterwards is a bug. `free(NULL)` does nothing. | `executor/` (`where.c`, `select.c`, `update.c`, `delete.c`), `index.c`, `persist.c`, `result.c`, `table.c` |
 | `strtoll(text, end, base)` | Converts text to a `long long`. On overflow it returns the largest value and sets `errno` to `ERANGE`. | `parser.c` |
-| `qsort(array, count, size, compare)` | Sorts any array, calling `compare(a, b)` on pairs of elements. `compare` returns negative, 0 or positive like `strcmp`. | `executor.c`, for `ORDER BY` |
+| `qsort(array, count, size, compare)` | Sorts any array, calling `compare(a, b)` on pairs of elements. `compare` returns negative, 0 or positive like `strcmp`. | `executor/select.c`, for `ORDER BY` |
 
 `malloc(0)` and `calloc(0, ...)` may return `NULL` without having
 failed, so the code checks for that case where a size can be 0.

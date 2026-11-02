@@ -26,13 +26,13 @@ Done:
       and saves after a change, built into `libtinysql.a`
 - [x] `''` inside a string for a quote, as in `'Men''s Shoes'`
 - [x] `--` comments, to the end of the line, outside strings
+- [x] `UNIQUE`, on one column or several, with `NULL` keys left
+      unchecked (file format version 5)
+- [x] Parameters: `?` wherever a value goes and in `LIMIT`, with the
+      values passed to `tinysql_run`
 
 Next, roughly in order, towards a toy online shop (see "Goal" below):
 
-- [ ] `UNIQUE`, for logging in by email and for an order's
-      `(user_id, idempotency_key)`; see "Keys and constraints" below
-- [ ] Parameters: `WHERE email = ?`, with the values passed separately,
-      in `LIMIT ?` too
 - [ ] `INSERT` with column names, `INSERT INTO users (email,
       password_hash) VALUES (?, ?)`, so an `AUTOINCREMENT` `id` can be
       left out
@@ -47,7 +47,9 @@ Next, roughly in order, towards a toy online shop (see "Goal" below):
 - [ ] `LIKE`, for searching item titles
 - [ ] A server that links `libtinysql.a`, with a wire protocol for
       statements, parameters and results, as `../DESIGN.md` describes
-      it under "Key decisions"
+      it under "Key decisions". Errors carry a code as well as the
+      message, so a service can tell a broken `UNIQUE` constraint
+      (its `409`, or an order's retry) from any other failure
 - [ ] Replication, for search's read replica, as `../DESIGN.md`
       describes it
 
@@ -72,6 +74,8 @@ Smaller tidy-ups:
       out of `not_condition`, whose name suggests it's always a NOT
 - [ ] `compile_commands.json` (git-ignored), so clangd jumps from a
       call to the function body
+- [x] Split `executor.c` (1,250 lines) into `src/executor/`, one file
+      per statement, as `CONVENTIONS.md` describes
 
 ## Goal: a toy online shop
 
@@ -86,20 +90,12 @@ The shop is designed in `../DESIGN.md`. Its schema and seed data live
 in `../db/`, not here; `seed/retail.sql` and `shop.db` are the old
 shop's, and get deleted.
 
-What already works, with literal values until there are parameters: an
-item by its key, and an order's availability check, `SELECT
-SUM(quantity) FROM orders WHERE item_id = 5 AND status = 'PENDING' AND
-expires_at > 1793000000`.
+What already works: an item by its key, and an order's availability
+check, `SELECT SUM(quantity) FROM orders WHERE item_id = ? AND status =
+'PENDING' AND expires_at > ?`.
 
 Why each item in the list is needed:
 
-- **`UNIQUE`.** Two accounts mustn't share an email, and logging in
-  looks one up, which the index makes fast. Two orders mustn't share a
-  user and idempotency key, so two retries arriving at once make one
-  order, not two.
-- **Parameters.** Building SQL from what a visitor types lets them write
-  SQL of their own (SQL injection). With `?`, a value can only ever be a
-  value.
 - **Arithmetic.** Confirming an order lowers the stock: `UPDATE items
   SET stock = stock - ? WHERE id = ?`. Today `SET` only takes a literal.
   The row is locked, so the app could read the stock and write the new
@@ -178,15 +174,13 @@ loaded, not stored, and `table.c` keeps it up to date through every
 change. `INSERT`, `UPDATE` and the loader reject duplicate keys, and a
 `WHERE` that pins down a whole key uses the index.
 
-### Next: UNIQUE
+### Done: UNIQUE
 
-Mostly a new kind, as it works like `PRIMARY KEY` with two differences:
-
-- Its columns may be `NULL`, and a key with a `NULL` in any column isn't
-  checked, as in standard SQL, so several such rows are allowed. Those
-  rows stay out of the index: `key_hash` asserts there's no `NULL`.
-- A table can have several. `find_key_lookup` already tries every
-  constraint, so a `WHERE` on any of them would use its index.
+Built the same way, as a second kind (`CONSTRAINT_UNIQUE`, kind 2 in
+the file from version 5). A table keeps up to `MAX_KEYS` (8) keys, and
+rejects two with the same columns. A key with a `NULL` stays out of its
+index (`key_has_null`), so `table_find_key` never finds it and it can't
+clash. `GRAMMAR.md` describes how it behaves.
 
 ### Later: REFERENCES
 

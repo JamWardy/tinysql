@@ -7,13 +7,17 @@
 #include "result.h"
 #include "table.h"
 
-// Runs one parsed statement against db and fills result, which must be
-// empty, as result_init and result_free leave it: a SELECT's columns and
-// rows, or how many rows an INSERT, UPDATE or DELETE changed. The caller
-// frees result with result_free.
-// On success returns 1. On failure writes a message to error and returns
-// 0; db is unchanged and result is left empty.
-int execute(Database *db, const Statement *stmt, Result *result,
-            char *error, size_t error_size);
+// The values for a statement's `?`s, in order. Text is read, never kept.
+typedef struct {
+    const Value *values;  // May be NULL when count is 0.
+    size_t count;
+} ParamList;
+
+// Runs stmt against db, filling result, which must be empty (as
+// result_init leaves it); the caller frees it with result_free.
+// Returns 1, or 0 with a message in error and result left empty. A
+// failed UPDATE may have changed some rows if memory ran out.
+int execute(Database *db, const Statement *stmt, const ParamList *params,
+            Result *result, char *error, size_t error_size);
 
 #endif

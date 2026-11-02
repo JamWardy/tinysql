@@ -11,9 +11,11 @@
 //   database_init(&db);
 //   if (!database_load(&db, "shop.db", error, sizeof(error))) { ... }
 //
+//   Value params[1] = { { .type = TYPE_INT, .as.integer = 5 } };
+//
 //   result_init(&result);
-//   if (tinysql_run(&db, "shop.db", "SELECT * FROM users;", &result,
-//                   error, sizeof(error))) {
+//   if (tinysql_run(&db, "shop.db", "SELECT * FROM users WHERE id = ?;",
+//                   params, 1, &result, error, sizeof(error))) {
 //       ... read result.names, result_value(&result, row, column) ...
 //   }
 //   result_free(&result);
@@ -38,11 +40,17 @@
 // leave it. After a change, db is saved to path, unless path is NULL.
 // The caller frees result with result_free.
 //
+// params holds param_count values, one for each `?` in sql, in order;
+// it may be NULL when param_count is 0. Each is INT, TEXT (with its
+// text '\0'-terminated) or NULL. TinySQL copies any text it keeps, so
+// params is only read during the call.
+//
 // On success returns 1. On failure writes a message to error, leaves
 // result empty and returns 0. Usually db is then unchanged, but if only
 // saving failed the change stays in memory, and is saved with the next
 // change that saves successfully.
 int tinysql_run(Database *db, const char *path, const char *sql,
+                const Value *params, size_t param_count,
                 Result *result, char *error, size_t error_size);
 
 #endif
