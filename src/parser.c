@@ -342,6 +342,7 @@ static int parse_value(Parser *p, Literal *out) {
 }
 
 // insert_stmt = INSERT INTO IDENTIFIER
+//               [ LPAREN IDENTIFIER { COMMA IDENTIFIER } RPAREN ]
 //               VALUES LPAREN value { COMMA value } RPAREN
 static int parse_insert(Parser *p, Statement *out) {
     if (!expect(p, TOKEN_INSERT, "INSERT") ||
@@ -354,13 +355,37 @@ static int parse_insert(Parser *p, Statement *out) {
         return 0;
     }
 
-    if (!expect(p, TOKEN_VALUES, "VALUES") ||
+    InsertStatement *insert = &out->as.insert;
+    insert->column_count = 0;
+    insert->value_count = 0;
+
+    if (match(p, TOKEN_LPAREN)) {
+        do {
+            if (insert->column_count == MAX_COLUMNS) {
+                return fail(p->error, sizeof(p->error),
+                            "too many columns (max %d)", MAX_COLUMNS);
+            }
+
+            const Token *column = expect(p, TOKEN_IDENTIFIER, "column name");
+            if (!column) {
+                return 0;
+            }
+
+            copy_text(insert->columns[insert->column_count],
+                      sizeof(insert->columns[0]), column->text);
+            insert->column_count++;
+        } while (match(p, TOKEN_COMMA));
+
+        if (!expect(p, TOKEN_RPAREN, "',' or ')'")) {
+            return 0;
+        }
+    }
+
+    if (!expect(p, TOKEN_VALUES,
+                insert->column_count > 0 ? "VALUES" : "'(' or VALUES") ||
         !expect(p, TOKEN_LPAREN, "'('")) {
         return 0;
     }
-
-    InsertStatement *insert = &out->as.insert;
-    insert->value_count = 0;
 
     do {
         if (insert->value_count == MAX_COLUMNS) {
@@ -377,6 +402,13 @@ static int parse_insert(Parser *p, Statement *out) {
 
     if (!expect(p, TOKEN_RPAREN, "',' or ')'")) {
         return 0;
+    }
+
+    if (insert->column_count > 0 &&
+        insert->column_count != insert->value_count) {
+        return fail(p->error, sizeof(p->error),
+                    "%d columns were named but %d values were given",
+                    insert->column_count, insert->value_count);
     }
 
     out->type = STMT_INSERT;

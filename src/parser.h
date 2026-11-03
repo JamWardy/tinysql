@@ -59,6 +59,11 @@ typedef struct {
 } CreateStatement;
 
 typedef struct {
+    // `INSERT INTO t (a, b)`: the columns the values go in, in order.
+    // 0 when there's no list, so the values fill every column in order.
+    char columns[MAX_COLUMNS][MAX_TOKEN_LENGTH];
+    int column_count;
+
     Literal values[MAX_COLUMNS];
     int value_count;
 } InsertStatement;

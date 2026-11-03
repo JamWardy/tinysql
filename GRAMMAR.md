@@ -31,6 +31,7 @@ table_key     = ( PRIMARY KEY | UNIQUE )
                 LPAREN IDENTIFIER { COMMA IDENTIFIER } RPAREN
 
 insert_stmt   = INSERT INTO IDENTIFIER
+                [ LPAREN IDENTIFIER { COMMA IDENTIFIER } RPAREN ]
                 VALUES LPAREN value { COMMA value } RPAREN
 
 value         = [ MINUS ] NUMBER | STRING | NULL | PARAM
@@ -80,6 +81,7 @@ INSERT INTO users VALUES (1, 'Alice', 25);
 INSERT INTO users VALUES (-3, 'Eve', 30);
 INSERT INTO users VALUES (2, NULL, NULL);    -- any column can be NULL
 INSERT INTO users VALUES (4, 'O''Brien', 40);  -- '' is one quote
+INSERT INTO users (name, id) VALUES ('Ann', 5);  -- age is left NULL
 SELECT * FROM users;
 SELECT name, age FROM users;
 SELECT * FROM users WHERE age >= 18;
@@ -116,6 +118,8 @@ INSERT INTO users VALUES (- -1);   -- only one '-'
 INSERT INTO users VALUES (-'a');   -- '-' only before a number
 INSERT INTO users VALUES (-NULL);  -- or NULL
 INSERT INTO users VALUES (4, 'O'Brien', 40);  -- write the quote as ''
+INSERT INTO users () VALUES ();    -- name at least one column
+INSERT INTO users (id, name) VALUES (1);  -- one value per column
 SELECT * FROM users                -- missing semicolon
 SELECT *, name FROM users;         -- '*' can't be mixed with columns
 SELECT * FROM users; SELECT 1;     -- one statement at a time
@@ -148,6 +152,8 @@ depend on what tables exist:
 - no two keys have the same columns, in any order
 - `INSERT` has the right number of values, of the right types (`NULL`
   fits any column that isn't `NOT NULL`)
+- `INSERT`'s columns exist, each named at most once, and no column
+  left out is `NOT NULL`
 - `UPDATE` sets columns that exist, each at most once, to values of the
   right types, or to `NULL` if the column isn't `NOT NULL`
 - no two rows have the same primary key or unique key, after an
@@ -159,6 +165,20 @@ depend on what tables exist:
 - each `WHERE` value has the same type as its column
 - there's one value for each `?`, and a `LIMIT ?`'s is a non-negative
   `INT`
+
+## Inserting
+
+An `INSERT` gives a value for every column, in the table's order, or
+names the columns it gives values for, in any order:
+
+```sql
+INSERT INTO users VALUES (1, 'Alice', 25);
+INSERT INTO users (name, id) VALUES ('Ann', 5);
+```
+
+A column left out is `NULL`, so it can't be `NOT NULL`. There must be
+one value per named column, and each column is named at most once.
+`()` with no columns is a syntax error.
 
 ## Combining conditions
 

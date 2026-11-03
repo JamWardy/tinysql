@@ -30,12 +30,12 @@ Done:
       unchecked (file format version 5)
 - [x] Parameters: `?` wherever a value goes and in `LIMIT`, with the
       values passed to `tinysql_run`
+- [x] `INSERT` with column names, `INSERT INTO users (email,
+      password_hash) VALUES (?, ?)`, leaving the others `NULL`, as
+      `GRAMMAR.md` describes under "Inserting"
 
 Next, roughly in order, towards a toy online shop (see "Goal" below):
 
-- [ ] `INSERT` with column names, `INSERT INTO users (email,
-      password_hash) VALUES (?, ?)`, so an `AUTOINCREMENT` `id` can be
-      left out
 - [ ] Arithmetic in `SET`: `SET stock = stock - ?`
 - [ ] Transactions: `BEGIN`, `COMMIT` and `ROLLBACK`
 - [ ] `SELECT ... FOR UPDATE`, to lock the item row. Accepted and
@@ -64,6 +64,10 @@ Later, nice but not needed for the shop:
       orders for different items don't wait for each other. Needs an
       undo log per transaction, as `ROLLBACK` can't reload the file
       while others are open
+- [ ] `DEFAULT` values in `CREATE TABLE` (a new file format version),
+      which a column left out of an `INSERT` gets instead of `NULL`.
+      Then revisit `INSERT` with column names, such as whether an empty
+      list `()` should be allowed
 - [ ] `OFFSET`, for page 2 of a list; search pages by `id` instead
 - [ ] `GROUP BY`
 - [ ] `JOIN`; until then the services run one query per table
