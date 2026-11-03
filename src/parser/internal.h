@@ -17,6 +17,7 @@ typedef struct {
     int pos;                  // Index of the next token to read.
     int param_count;          // `?`s read so far.
     char error[MAX_ERROR];    // Set by the first check that fails.
+    Statement *stmt;          // Output; its nodes hold every expression.
 } Parser;
 
 // Statements, one per file: parse() in parser.c picks the one for the
@@ -63,11 +64,21 @@ int expect_end(Parser *p, const char *options);
 // The only places a Literal is built, so its tag always matches its value.
 Literal literal_int(long long n);
 Literal literal_text(const char *text);
+Literal literal_bool(int b);
 Literal literal_null(void);
 Literal literal_param(Parser *p);  // The next `?` in p's statement.
 
-// value = [ MINUS ] NUMBER | STRING | NULL | PARAM
+// value = [ MINUS ] NUMBER | STRING | TRUE | FALSE | NULL | PARAM
 int parse_value(Parser *p, Literal *out);
+
+// expr.c: expressions, built into p->stmt->nodes.
+
+// Adds a node of the given kind to the statement and sets *out to its
+// index. Returns 1, or 0 if the statement has MAX_NODES already.
+int new_node(Parser *p, ExprKind kind, int *out);
+
+// Parses an expression and sets *out to the index of its root node.
+int parse_expr(Parser *p, int *out);
 
 // where.c
 

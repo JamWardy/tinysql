@@ -6,27 +6,35 @@
 
 #include "error.h"
 
-// The new value UPDATE gives each column it sets: values[i] goes in
-// column columns.positions[i].
+// What UPDATE sets: each column in columns gets the value of the
+// expression with the same index in exprs. values holds the new values
+// for the rows being updated, worked out before any row changes: for
+// the i-th, values[i * columns.count + c] goes in column
+// columns.positions[c]. Text there points into the old rows, the
+// statement or a parameter.
 typedef struct {
     ColumnList columns;
-    Value values[MAX_COLUMNS];
+    int exprs[MAX_COLUMNS];  // Root nodes.
+    Value *values;
 } Changes;
 
 // Fills after with row r's values as they'll be after the UPDATE: with
-// changes made if updating[r] is set, otherwise as they are. Text points
-// into the row or the statement, so after is only for reading straight
-// away.
+// the changes for the i-th updated row if updating[r] is i + 1, or as
+// they are if it's 0. Text points into the rows or the statement, so
+// after is only for reading straight away.
 static void values_after_update(const Table *table, size_t r,
-                                const unsigned char *updating,
+                                const size_t *updating,
                                 const Changes *changes, Value *after) {
     const Row *row = &table->rows[r];
 
     memcpy(after, row->values, row->count * sizeof(*after));
 
-    if (updating[r]) {
-        for (size_t i = 0; i < changes->columns.count; i++) {
-            after[changes->columns.positions[i]] = changes->values[i];
+    if (updating[r] > 0) {
+        const Value *values = &changes->values[(updating[r] - 1) *
+                                               changes->columns.count];
+
+        for (size_t c = 0; c < changes->columns.count; c++) {
+            after[changes->columns.positions[c]] = values[c];
         }
     }
 }
@@ -34,7 +42,7 @@ static void values_after_update(const Table *table, size_t r,
 // What check_key_after_update is looking for, passed through index_find.
 typedef struct {
     const Table *table;
-    const unsigned char *updating;
+    const size_t *updating;
     const Changes *changes;
     const ColumnList *key;
     const Value *values;  // The key being looked for, laid out like a row.
@@ -58,7 +66,7 @@ static int updated_row_has_key(size_t row, const void *context) {
 // enough: two updated rows can clash with each other.
 static int check_key_after_update(const Table *table,
                                   const Constraint *constraint,
-                                  const unsigned char *updating,
+                                  const size_t *updating,
                                   const Changes *changes,
                                   char *error, size_t error_size) {
     Index seen;
@@ -102,7 +110,7 @@ static int check_keys_after_update(const Table *table,
                                    const PositionList *matched,
                                    const Changes *changes,
                                    char *error, size_t error_size) {
-    unsigned char *updating = NULL;  // Per row, 1 if it's being updated.
+    size_t *updating = NULL;  // Per row, as values_after_update reads it.
     int ok = 1;
 
     for (size_t c = 0; c < table->constraint_count && ok; c++) {
@@ -123,12 +131,12 @@ static int check_keys_after_update(const Table *table,
         }
 
         if (!updating) {
-            updating = calloc(table->row_count, 1);
+            updating = calloc(table->row_count, sizeof(*updating));
             if (!updating) {
                 return fail(error, error_size, "out of memory");
             }
             for (size_t i = 0; i < matched->count; i++) {
-                updating[matched->positions[i]] = 1;
+                updating[matched->positions[i]] = i + 1;
             }
         }
 
@@ -140,27 +148,27 @@ static int check_keys_after_update(const Table *table,
     return ok;
 }
 
-// Fills out with the column and new value of each of update's
-// assignments, checking each column exists, is set at most once, and can
-// take its value.
-static int resolve_changes(const Table *table, const UpdateStatement *update,
-                           const ParamList *params, Changes *out,
-                           char *error, size_t error_size) {
+// Fills out's columns and expressions from update's assignments,
+// checking each column exists, is set at most once, and has an
+// expression of its type.
+static int resolve_changes(ExprContext *ctx, const UpdateStatement *update,
+                           Changes *out, char *error, size_t error_size) {
+    const Table *table = ctx->table;
+
     out->columns.count = (size_t)update->assignment_count;
+    out->values = NULL;
 
     for (size_t i = 0; i < out->columns.count; i++) {
         const Assignment *assign = &update->assignments[i];
         size_t index;
 
         if (!common_find_column(table, assign->column, &index,
-                                error, error_size)) {
-            return 0;
-        }
-
-        Value value = common_literal_to_value(&assign->value, params);
-
-        if (!common_check_value(&table->columns[index], value.type,
-                                error, error_size)) {
+                                error, error_size) ||
+            !expr_resolve(ctx, assign->value, EXPR_COLUMNS, "SET",
+                          error, error_size) ||
+            !common_check_type(&table->columns[index],
+                               ctx->types[assign->value], "value",
+                               error, error_size)) {
             return 0;
         }
 
@@ -172,10 +180,68 @@ static int resolve_changes(const Table *table, const UpdateStatement *update,
         }
 
         out->columns.positions[i] = index;
-        out->values[i] = value;
+        out->exprs[i] = assign->value;
     }
 
     return 1;
+}
+
+// Fills changes->values with the new values for the rows in matched,
+// each worked out from the row as it is. Fails, with nothing changed,
+// on overflow, division by zero or a NULL for a NOT NULL column.
+static int compute_changes(const ExprContext *ctx,
+                           const PositionList *matched, Changes *changes,
+                           char *error, size_t error_size) {
+    const Table *table = ctx->table;
+    size_t width = changes->columns.count;
+    size_t count = matched->count * width;
+
+    changes->values = malloc(count * sizeof(*changes->values));
+    if (!changes->values && count > 0) {
+        return fail(error, error_size, "out of memory");
+    }
+
+    for (size_t i = 0; i < matched->count; i++) {
+        const Row *row = &table->rows[matched->positions[i]];
+
+        for (size_t c = 0; c < width; c++) {
+            Value *value = &changes->values[i * width + c];
+            const Column *column = &table->columns[changes->columns.positions[c]];
+
+            if (!expr_evaluate(ctx, changes->exprs[c], row, value,
+                               error, error_size) ||
+                !common_check_value(column, value->type, error, error_size)) {
+                return 0;
+            }
+        }
+    }
+
+    return 1;
+}
+
+// Writes the i-th updated row's new values into row r. They're copied
+// first, as they may point into the row itself: with SET a = b, b = a,
+// writing a frees the text b's new value points to.
+// Returns 1, or 0 if memory ran out (some columns may have changed).
+static int write_row(Table *table, size_t r, const Changes *changes,
+                     size_t i) {
+    size_t width = changes->columns.count;
+    Value copies[MAX_COLUMNS];
+    int ok = 1;
+    size_t copied = 0;
+
+    while (copied < width && ok) {
+        ok = value_copy(&copies[copied], &changes->values[i * width + copied]);
+        copied += ok;
+    }
+
+    for (size_t c = 0; c < width && ok; c++) {
+        ok = table_set_value(table, r, changes->columns.positions[c],
+                             &copies[c]);
+    }
+
+    values_free(copies, copied);
+    return ok;
 }
 
 int execute_update(Database *db, const Statement *stmt,
@@ -188,14 +254,16 @@ int execute_update(Database *db, const Statement *stmt,
         return 0;
     }
 
-    // Check every assignment, the WHERE and the keys before changing any
-    // row.
+    // Check every assignment, the WHERE and the keys, and work out every
+    // new value, before changing any row.
+    ExprContext ctx;
     Changes changes;
     Filter filter;
     const Filter *where;
 
-    if (!resolve_changes(table, update, params, &changes,
-                         error, error_size) ||
+    expr_init(&ctx, stmt, table, params);
+
+    if (!resolve_changes(&ctx, update, &changes, error, error_size) ||
         !where_resolve(table, params, update->has_where, &update->where,
                        &filter, &where, error, error_size)) {
         return 0;
@@ -209,30 +277,31 @@ int execute_update(Database *db, const Statement *stmt,
         return 0;
     }
 
-    if (!check_keys_after_update(table, &matched, &changes,
+    if (!compute_changes(&ctx, &matched, &changes, error, error_size) ||
+        !check_keys_after_update(table, &matched, &changes,
                                  error, error_size)) {
+        free(changes.values);
         free(matched.positions);
         return 0;
     }
 
     size_t updated = 0;
+    int ok = 1;
 
-    for (size_t i = 0; i < matched.count; i++) {
-        for (size_t c = 0; c < changes.columns.count; c++) {
-            // Only text needs memory. Running out partway leaves the
-            // changes made so far in place; there's no undo.
-            if (!table_set_value(table, matched.positions[i],
-                                 changes.columns.positions[c],
-                                 &changes.values[c])) {
-                free(matched.positions);
-                return fail(error, error_size,
-                            "out of memory after updating %zu rows", updated);
-            }
-        }
-        updated++;
+    // Only text needs memory. Running out partway leaves the changes
+    // made so far in place; there's no undo.
+    while (updated < matched.count && ok) {
+        ok = write_row(table, matched.positions[updated], &changes, updated);
+        updated += ok;
     }
 
-    result->changed = updated;
+    free(changes.values);
     free(matched.positions);
+
+    if (!ok) {
+        return fail(error, error_size,
+                    "out of memory after updating %zu rows", updated);
+    }
+    result->changed = updated;
     return 1;
 }

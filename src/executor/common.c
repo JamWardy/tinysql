@@ -36,13 +36,20 @@ int common_check_value(const Column *column, DataType given,
 }
 
 int common_compare_values(const Value *a, const Value *b) {
-    if (a->type == TYPE_INT) {
-        long long x = a->as.integer;
- long long y = b->as.integer;
- return (x > y) - (x < y);
+    switch (a->type) {
+        case TYPE_INT: {
+            long long x = a->as.integer;
+            long long y = b->as.integer;
+            return (x > y) - (x < y);
+        }
+        case TYPE_TEXT:
+            return strcmp(a->as.text, b->as.text);
+        case TYPE_BOOL:
+            return a->as.boolean - b->as.boolean;  // false < true.
+        case TYPE_NULL:
+            break;  // Callers handle NULL first.
     }
-
-    return strcmp(a->as.text, b->as.text);
+    return 0;
 }
 
 int common_find_column(const Table *table, const char *name, size_t *index,
@@ -70,6 +77,10 @@ Value common_literal_to_value(const Literal *lit, const ParamList *params) {
             // copies; the table functions only read this one and copy it.
             value.type = TYPE_TEXT;
             value.as.text = (char *)literal_as_text(lit);
+            break;
+        case LITERAL_BOOL:
+            value.type = TYPE_BOOL;
+            value.as.boolean = lit->as.boolean;
             break;
         case LITERAL_NULL:
             value.type = TYPE_NULL;

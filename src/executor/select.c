@@ -45,16 +45,6 @@ static int compare_rows(const void *a, const void *b) {
     return c;
 }
 
-static const char *aggregate_name(AggregateFunc func) {
-    switch (func) {
-        case AGG_COUNT: return "COUNT";
-        case AGG_SUM:   return "SUM";
-        case AGG_MIN:   return "MIN";
-        case AGG_MAX:   return "MAX";
-    }
-    return "UNKNOWN";
-}
-
 // Writes the column heading for agg into heading, e.g. "COUNT(*)" or
 // "MAX(age)".
 static void aggregate_heading(const Aggregate *agg, char *heading,

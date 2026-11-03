@@ -28,6 +28,22 @@ typedef struct {
     size_t count;
 } RowList;
 
+// A statement's expressions checked against its table, ready to
+// evaluate: each node's type, and each column node's position in a row.
+// Filled by expr_resolve, one tree at a time.
+typedef struct {
+    const ExprNode *nodes;         // The statement's.
+    const Table *table;
+    const ParamList *params;       // The values of any `?`s.
+    DataType types[MAX_NODES];     // Per resolved node; NULL for NULL.
+    size_t columns[MAX_NODES];     // Per EXPR_COLUMN node.
+    Value aggregates[MAX_NODES];   // Per EXPR_AGGREGATE node, once computed.
+} ExprContext;
+
+// What an expression may use, for expr_resolve.
+#define EXPR_COLUMNS 1     // Columns of the row being read.
+#define EXPR_AGGREGATES 2  // Aggregates, and columns only inside them.
+
 // Positions of rows in a table, in ascending order. Valid only until
 // the table next changes. Whoever fills one frees positions when done.
 typedef struct {
@@ -103,6 +119,40 @@ Value common_literal_to_value(const Literal *lit, const ParamList *params);
 // like a row.
 int common_fail_duplicate(const Table *table, const Constraint *constraint,
                           const Value *values, char *error, size_t error_size);
+
+// expr.c: checking and evaluating expressions.
+
+// Readies ctx for stmt's expressions over table, with params for `?`s.
+// stmt, table and params must outlive ctx.
+void expr_init(ExprContext *ctx, const Statement *stmt, const Table *table,
+               const ParamList *params);
+
+// Checks the expression at node and fills in its types and columns:
+// every column exists and is allowed, and each operator gets the types
+// it needs. allowed holds EXPR_ flags, and place names where the
+// expression is, such as "VALUES", for messages. Then ctx->types[node]
+// is its type.
+int expr_resolve(ExprContext *ctx, int node, int allowed, const char *place,
+                 char *error, size_t error_size);
+
+// Sets *out to the value of the resolved expression at node for row,
+// which may be NULL if the expression reads no columns. Fails on
+// overflow or division by zero. Text in *out points into row, the
+// statement or a parameter, so it's only for reading straight away.
+int expr_evaluate(const ExprContext *ctx, int node, const Row *row,
+                  Value *out, char *error, size_t error_size);
+
+// Works out every aggregate in the resolved expression at node over
+// rows, for expr_evaluate to read.
+int expr_compute_aggregates(ExprContext *ctx, int node, const RowList *rows,
+                            char *error, size_t error_size);
+
+// Returns 1 if the expression at node has an aggregate in it.
+int expr_has_aggregate(const ExprNode *nodes, int node);
+
+// Returns 1 if the expression at node reads any column, so its value
+// may differ from row to row.
+int expr_uses_columns(const ExprNode *nodes, int node);
 
 // where.c: checking a WHERE and finding the rows it matches.
 

@@ -25,12 +25,14 @@ typedef struct {
 } Column;
 
 // A stored value: its column's type, or TYPE_NULL, for which as is
-// unused. When type is TYPE_TEXT, as.text is owned by the Row.
+// unused. When type is TYPE_TEXT, as.text is owned by the Row. Only an
+// expression's value can be TYPE_BOOL, as no column is.
 typedef struct {
     DataType type;
     union {
         long long integer;
         char *text;
+        int boolean;  // 1 for true, 0 for false.
     } as;
 } Value;
 

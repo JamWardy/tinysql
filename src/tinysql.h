@@ -42,7 +42,7 @@
 //
 // params holds param_count values, one for each `?` in sql, in order;
 // it may be NULL when param_count is 0. Each is INT, TEXT (with its
-// text '\0'-terminated) or NULL. TinySQL copies any text it keeps, so
+// text '\0'-terminated), BOOL or NULL. TinySQL copies any text it keeps, so
 // params is only read during the call.
 //
 // On success returns 1. On failure writes a message to error, leaves

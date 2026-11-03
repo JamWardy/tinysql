@@ -12,16 +12,20 @@ static int value_width(const Value *value) {
     switch (value->type) {
         case TYPE_INT:  return snprintf(NULL, 0, "%lld", value->as.integer);
         case TYPE_TEXT: return (int)strlen(value->as.text);
+        case TYPE_BOOL: return value->as.boolean ? 4 : 5;  // true, false
         case TYPE_NULL: return (int)strlen(NULL_TEXT);
     }
     return 0;
 }
 
 static void print_value(const Value *value, int width) {
-    // Numbers line up on the right, text and NULL on the left.
+    // Numbers line up on the right, everything else on the left.
     switch (value->type) {
         case TYPE_INT:  printf("%*lld", width, value->as.integer); break;
         case TYPE_TEXT: printf("%-*s", width, value->as.text); break;
+        case TYPE_BOOL:
+            printf("%-*s", width, value->as.boolean ? "true" : "false");
+            break;
         case TYPE_NULL: printf("%-*s", width, NULL_TEXT); break;
     }
 }

@@ -5,7 +5,7 @@
 
 // insert_stmt = INSERT INTO IDENTIFIER
 //               [ LPAREN IDENTIFIER { COMMA IDENTIFIER } RPAREN ]
-//               VALUES LPAREN value { COMMA value } RPAREN
+//               VALUES LPAREN expr { COMMA expr } RPAREN
 int parse_insert(Parser *p, Statement *out) {
     if (!expect(p, TOKEN_INSERT, "INSERT") ||
         !expect(p, TOKEN_INTO, "INTO")) {
@@ -55,7 +55,7 @@ int parse_insert(Parser *p, Statement *out) {
                         "too many values (max %d)", MAX_COLUMNS);
         }
 
-        if (!parse_value(p, &insert->values[insert->value_count])) {
+        if (!parse_expr(p, &insert->values[insert->value_count])) {
             return 0;
         }
 

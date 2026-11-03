@@ -3,7 +3,7 @@
 #include "error.h"
 #include "text.h"
 
-// assignment = IDENTIFIER EQUAL value
+// assignment = IDENTIFIER EQUAL expr
 static int parse_assignment(Parser *p, Assignment *out) {
     const Token *column = expect(p, TOKEN_IDENTIFIER, "column name");
     if (!column) {
@@ -11,7 +11,7 @@ static int parse_assignment(Parser *p, Assignment *out) {
     }
 
     if (!expect(p, TOKEN_EQUAL, "'='") ||
-        !parse_value(p, &out->value)) {
+        !parse_expr(p, &out->value)) {
         return 0;
     }
 

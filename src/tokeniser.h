@@ -16,6 +16,9 @@ typedef enum {
     TOKEN_SEMICOLON,
     TOKEN_STAR,
     TOKEN_MINUS,
+    TOKEN_PLUS,
+    TOKEN_SLASH,
+    TOKEN_PERCENT,
     TOKEN_EQUAL,
     TOKEN_NOT_EQUAL,
     TOKEN_LESS,
@@ -54,6 +57,9 @@ typedef enum {
     TOKEN_PRIMARY,
     TOKEN_KEY,
     TOKEN_UNIQUE,
+    TOKEN_TRUE,
+    TOKEN_FALSE,
+    TOKEN_AS,
     TOKEN_EOF
 } TokenType;
 

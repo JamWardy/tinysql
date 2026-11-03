@@ -180,19 +180,77 @@ A column left out is `NULL`, so it can't be `NOT NULL`. There must be
 one value per named column, and each column is named at most once.
 `()` with no columns is a syntax error.
 
-## Combining conditions
+## Expressions
 
-From tightest to loosest binding: `NOT`, then `AND`, then `OR`. So
+An expression works a value out from values, columns and operators,
+such as `stock - ?`, `price * quantity` or `age >= 18 AND name != 'Bob'`.
+They go in:
 
-```sql
-WHERE a = 1 OR b = 2 AND NOT c = 3
-```
+- `SET`: `UPDATE items SET stock = stock - ? WHERE id = ?`
+- `VALUES`, but without columns, as there's no row yet:
+  `INSERT INTO t VALUES (1 + 1, -?)`
+- `WHERE`, on either side of a comparison: `WHERE 18 < age`
+- the `SELECT` list, each item optionally named with `AS`:
+  `SELECT price * quantity AS total FROM order_items`
+- aggregates, and around them: `SUM(price * quantity)`, `MAX(a) - MIN(a)`
+- `ORDER BY`: `ORDER BY price * quantity DESC`
 
-means `a = 1 OR (b = 2 AND (NOT c = 3))`. Use parentheses to group
-differently. Several `AND`s or `OR`s in a row group from the left.
+`LIMIT` takes only a number or `?`.
 
-A `WHERE` can hold at most 64 nodes, counting each comparison, `AND`, `OR`
-and `NOT` as one. Parentheses don't count.
+### Operators
+
+From loosest to tightest binding:
+
+| Operators | Takes | Gives |
+|---|---|---|
+| `OR` | `BOOL`s | `BOOL` |
+| `AND` | `BOOL`s | `BOOL` |
+| `NOT` | a `BOOL` | `BOOL` |
+| `=`, `!=` or `<>`, `<`, `<=`, `>`, `>=`, `IS [NOT] NULL` | two values of the same type; `IS` any one | `BOOL` |
+| `+`, `-` | `INT`s | `INT` |
+| `*`, `/`, `%` | `INT`s | `INT` |
+| `-` before a value | an `INT` | `INT` |
+
+So `a = 1 OR b = 2 AND NOT c + 1 = 3` means
+`(a = 1) OR ((b = 2) AND (NOT ((c + 1) = 3)))`. Brackets group
+differently. Operators of the same level group from the left, so
+`10 - 3 - 2` is 5. A comparison can't be chained: `a < b < c` is an
+error.
+
+### BOOL
+
+Comparisons, `AND`, `OR` and `NOT` give a `BOOL`: `true` or `false`,
+written `TRUE` and `FALSE`. A `WHERE` must be a `BOOL` (or `NULL`), so
+`WHERE age` is an error. `BOOL`s compare with `false` before `true`.
+A column can't be a `BOOL`; only expressions are.
+
+### Integers
+
+`INT`s are 64-bit. Going past that range is an error, `integer out of
+range`, and so is dividing by zero, `division by zero`. `/` drops the
+fraction, rounding toward zero (`7 / 2` is 3, `-7 / 2` is -3), and `%`
+gives what's left, with the sign of the left side (`-7 % 2` is -1).
+These errors happen as rows are read, before anything is changed.
+
+### NULL in expressions
+
+An operator given a `NULL` gives `NULL`: `NULL + 1` and `NULL = NULL`
+are both `NULL`. The exceptions are `IS [NOT] NULL`, and `AND` and `OR`,
+which follow the table under "NULL" below. `NULL` written straight into
+a comparison, as in `age = NULL`, is still an error pointing to
+`IS NULL`.
+
+### SET reads the old row
+
+Every expression in a `SET` reads the row as it was before the
+`UPDATE`, so `SET a = b, b = a` swaps the two, as in standard SQL.
+
+### Headings
+
+A `SELECT` item's column is headed by its `AS` name, or its column's
+name for a plain column, or otherwise by the expression rebuilt from
+how it was parsed, with brackets only where they're needed: `price *
+quantity`, `(a + b) * 2`.
 
 ## Parameters
 

@@ -6,8 +6,10 @@
 //             | update_stmt | drop_stmt ) SEMICOLON EOF
 int parse(const TokenList *tokens, Statement *out,
           char *error, size_t error_size) {
-    Parser p = { tokens, 0, 0, "" };
+    Parser p = { tokens, 0, 0, "", out };
     int ok;
+
+    out->node_count = 0;
 
     switch (peek(&p)->type) {
         case TOKEN_CREATE:

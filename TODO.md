@@ -36,7 +36,14 @@ Done:
 
 Next, roughly in order, towards a toy online shop (see "Goal" below):
 
-- [ ] Arithmetic in `SET`: `SET stock = stock - ?`
+- [ ] Expressions, as `GRAMMAR.md` describes under "Expressions",
+      such as `SET stock = stock - ?`, in three steps:
+  - [ ] The expression tree, its parser and `executor/expr.c`, with
+        `SET` and `VALUES` using it
+  - [ ] `WHERE` as an expression, with `BOOL`, `TRUE`, `FALSE` and the
+        key lookup
+  - [ ] `SELECT` items, aggregates over expressions, `ORDER BY` and
+        `AS`
 - [ ] Transactions: `BEGIN`, `COMMIT` and `ROLLBACK`
 - [ ] `SELECT ... FOR UPDATE`, to lock the item row. Accepted and
       needs nothing more, as the server runs one transaction at a time
@@ -68,6 +75,9 @@ Later, nice but not needed for the shop:
       which a column left out of an `INSERT` gets instead of `NULL`.
       Then revisit `INSERT` with column names, such as whether an empty
       list `()` should be allowed
+- [ ] `||` to join text. Unlike the other operators it makes new text,
+      so evaluating needs memory for it
+- [ ] `BOOL` columns (a new file format version)
 - [ ] `OFFSET`, for page 2 of a list; search pages by `id` instead
 - [ ] `GROUP BY`
 - [ ] `JOIN`; until then the services run one query per table

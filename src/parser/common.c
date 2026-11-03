@@ -62,6 +62,13 @@ Literal literal_text(const char *text) {
     return lit;
 }
 
+Literal literal_bool(int b) {
+    Literal lit;
+    lit.kind = LITERAL_BOOL;
+    lit.as.boolean = b;
+    return lit;
+}
+
 Literal literal_null(void) {
     Literal lit;
     lit.kind = LITERAL_NULL;
@@ -79,6 +86,7 @@ const char *data_type_name(DataType type) {
     switch (type) {
         case TYPE_INT:  return "INT";
         case TYPE_TEXT: return "TEXT";
+        case TYPE_BOOL: return "BOOL";
         case TYPE_NULL: return "NULL";
     }
     return "UNKNOWN";
@@ -94,6 +102,37 @@ const char *literal_as_text(const Literal *lit) {
     return lit->as.text;
 }
 
+const char *operator_name(Operator op) {
+    switch (op) {
+        case OP_NEGATE:        return "-";
+        case OP_NOT:           return "NOT";
+        case OP_ADD:           return "+";
+        case OP_SUBTRACT:      return "-";
+        case OP_MULTIPLY:      return "*";
+        case OP_DIVIDE:        return "/";
+        case OP_REMAINDER:     return "%";
+        case OP_EQUAL:         return "=";
+        case OP_NOT_EQUAL:     return "!=";
+        case OP_LESS:          return "<";
+        case OP_LESS_EQUAL:    return "<=";
+        case OP_GREATER:       return ">";
+        case OP_GREATER_EQUAL: return ">=";
+        case OP_AND:           return "AND";
+        case OP_OR:            return "OR";
+    }
+    return "?";
+}
+
+const char *aggregate_name(AggregateFunc func) {
+    switch (func) {
+        case AGG_COUNT: return "COUNT";
+        case AGG_SUM:   return "SUM";
+        case AGG_MIN:   return "MIN";
+        case AGG_MAX:   return "MAX";
+    }
+    return "?";
+}
+
 const char *constraint_kind_name(ConstraintKind kind) {
     switch (kind) {
         case CONSTRAINT_PRIMARY_KEY: return "PRIMARY KEY";
@@ -102,7 +141,6 @@ const char *constraint_kind_name(ConstraintKind kind) {
     return "UNKNOWN";
 }
 
-// value = [ MINUS ] NUMBER | STRING | NULL | PARAM
 int parse_value(Parser *p, Literal *out) {
     int negative = match(p, TOKEN_MINUS);
     const Token *token = peek(p);
@@ -128,6 +166,9 @@ int parse_value(Parser *p, Literal *out) {
         *out = literal_int(n);
     } else if (token->type == TOKEN_STRING && !negative) {
         *out = literal_text(token->text);
+    } else if ((token->type == TOKEN_TRUE || token->type == TOKEN_FALSE) &&
+               !negative) {
+        *out = literal_bool(token->type == TOKEN_TRUE);
     } else if (token->type == TOKEN_NULL && !negative) {
         *out = literal_null();
     } else if (token->type == TOKEN_PARAM && !negative) {
