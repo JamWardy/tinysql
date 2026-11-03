@@ -301,3 +301,10 @@ int parse_expr(Parser *p, int *out) {
 
     return 1;
 }
+
+int parse_where(Parser *p, int *has_where, int *where) {
+    *has_where = match(p, TOKEN_WHERE);
+    *where = -1;
+
+    return !*has_where || parse_expr(p, where);
+}

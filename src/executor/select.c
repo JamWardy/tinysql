@@ -313,9 +313,14 @@ static int rows_result(const Table *table, const ColumnList *columns,
 }
 
 // SELECT of columns, e.g. SELECT name, age FROM people WHERE age > 30.
-static int select_rows(const Table *table, const SelectStatement *select,
+static int select_rows(const Table *table, const Statement *stmt,
                        const ParamList *params, Result *result,
                        char *error, size_t error_size) {
+    const SelectStatement *select = &stmt->as.select;
+    ExprContext ctx;
+
+    expr_init(&ctx, stmt, table, params);
+
     // Check every name before reading any row, so a bad query fails
     // before any work is done.
     ColumnList columns;
@@ -325,7 +330,7 @@ static int select_rows(const Table *table, const SelectStatement *select,
     long long limit;
 
     if (!resolve_columns(table, select, &columns, error, error_size) ||
-        !where_resolve(table, params, select->has_where, &select->where,
+        !where_resolve(&ctx, select->has_where, select->where,
                        &filter, &where, error, error_size) ||
         !resolve_order_by(table, select, &order_column,
                           error, error_size) ||
@@ -348,10 +353,14 @@ static int select_rows(const Table *table, const SelectStatement *select,
 }
 
 // SELECT of aggregates, e.g. SELECT COUNT(*), MAX(age) FROM people.
-static int select_aggregates(const Table *table,
-                             const SelectStatement *select,
+static int select_aggregates(const Table *table, const Statement *stmt,
                              const ParamList *params, Result *result,
                              char *error, size_t error_size) {
+    const SelectStatement *select = &stmt->as.select;
+    ExprContext ctx;
+
+    expr_init(&ctx, stmt, table, params);
+
     ColumnList columns;  // The column each aggregate reads.
     Filter filter;
     const Filter *where;
@@ -361,7 +370,7 @@ static int select_aggregates(const Table *table,
     // ORDER BY is still resolved, so a bad column name is an error here
     // as it is everywhere else.
     if (!resolve_aggregates(table, select, &columns, error, error_size) ||
-        !where_resolve(table, params, select->has_where, &select->where,
+        !where_resolve(&ctx, select->has_where, select->where,
                        &filter, &where, error, error_size) ||
         !resolve_order_by(table, select, &order_column,
                           error, error_size) ||
@@ -393,8 +402,8 @@ int execute_select(Database *db, const Statement *stmt,
     }
 
     return select->has_aggregates
-               ? select_aggregates(table, select, params, result,
+               ? select_aggregates(table, stmt, params, result,
                                    error, error_size)
-               : select_rows(table, select, params, result,
+               : select_rows(table, stmt, params, result,
                              error, error_size);
 }

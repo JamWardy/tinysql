@@ -12,14 +12,6 @@
 #include "result.h"
 #include "table.h"
 
-// A WHERE condition tree checked and resolved against a table.
-typedef struct {
-    const Condition *conditions;     // The statement's nodes.
-    size_t columns[MAX_CONDITIONS];  // Per COND_COMPARE node, its column.
-    int root;
-    const ParamList *params;         // The values of any `?`s.
-} Filter;
-
 // The rows a query matched. These are pointers into the table, not
 // copies, so they're valid only until the table next changes. Whoever
 // fills one frees rows when done.
@@ -43,6 +35,12 @@ typedef struct {
 // What an expression may use, for expr_resolve.
 #define EXPR_COLUMNS 1     // Columns of the row being read.
 #define EXPR_AGGREGATES 2  // Aggregates, and columns only inside them.
+
+// A WHERE, resolved: a BOOL expression in ctx, whose root is root.
+typedef struct {
+    const ExprContext *ctx;
+    int root;
+} Filter;
 
 // Positions of rows in a table, in ascending order. Valid only until
 // the table next changes. Whoever fills one frees positions when done.
@@ -156,17 +154,17 @@ int expr_uses_columns(const ExprNode *nodes, int node);
 
 // where.c: checking a WHERE and finding the rows it matches.
 
-// Checks every comparison in where against table and fills filter, then
-// sets *out to filter, or to NULL (matching every row) when has_where
-// is 0. Done before any row is read, so a bad column or type is
-// reported even when no row would reach that part of the condition.
-// params holds the values of any `?`s, and must outlive filter.
-int where_resolve(const Table *table, const ParamList *params, int has_where,
-                  const WhereClause *where, Filter *filter,
+// Resolves the WHERE expression at root in ctx, checks it's a BOOL, and
+// fills filter, then sets *out to filter, or to NULL (matching every
+// row) when has_where is 0. Done before any row is read, so a bad column
+// or type is reported even when no row would reach that part of the
+// condition. ctx must outlive filter.
+int where_resolve(ExprContext *ctx, int has_where, int root, Filter *filter,
                   const Filter **out, char *error, size_t error_size);
 
 // Fills out with the positions of the rows filter matches, in table
-// order, through a key's index when the filter allows it.
+// order, through a key's index when the filter allows it. Fails if
+// evaluating the WHERE does, for overflow or division by zero.
 int where_collect_positions(const Table *table, const Filter *filter,
                             PositionList *out, char *error, size_t error_size);
 

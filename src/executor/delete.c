@@ -14,10 +14,13 @@ int execute_delete(Database *db, const Statement *stmt,
 
     // As in SELECT, check the whole WHERE before touching any row, so a
     // bad column can't leave a delete half done.
+    ExprContext ctx;
     Filter filter;
     const Filter *where;
 
-    if (!where_resolve(table, params, delete->has_where, &delete->where,
+    expr_init(&ctx, stmt, table, params);
+
+    if (!where_resolve(&ctx, delete->has_where, delete->where,
                        &filter, &where, error, error_size)) {
         return 0;
     }

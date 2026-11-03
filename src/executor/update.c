@@ -264,7 +264,7 @@ int execute_update(Database *db, const Statement *stmt,
     expr_init(&ctx, stmt, table, params);
 
     if (!resolve_changes(&ctx, update, &changes, error, error_size) ||
-        !where_resolve(table, params, update->has_where, &update->where,
+        !where_resolve(&ctx, update->has_where, update->where,
                        &filter, &where, error, error_size)) {
         return 0;
     }

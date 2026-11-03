@@ -80,10 +80,8 @@ int new_node(Parser *p, ExprKind kind, int *out);
 // Parses an expression and sets *out to the index of its root node.
 int parse_expr(Parser *p, int *out);
 
-// where.c
-
-// [ WHERE condition ], in SELECT, UPDATE and DELETE. Sets *has_where to
-// whether there was one.
-int parse_where(Parser *p, int *has_where, WhereClause *where);
+// [ WHERE expr ], in SELECT, UPDATE and DELETE. Sets *has_where to
+// whether there was one, and *where to its root node.
+int parse_where(Parser *p, int *has_where, int *where);
 
 #endif

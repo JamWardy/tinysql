@@ -11,7 +11,7 @@ LIB_SRCS = src/tinysql.c src/tokeniser.c src/table.c src/index.c \
 # The parser, one file per statement plus what they share.
 PARSER_SRCS = src/parser/parser.c src/parser/common.c \
               src/parser/expr.c src/parser/deparse.c \
-              src/parser/where.c src/parser/schema.c \
+              src/parser/schema.c \
               src/parser/insert.c src/parser/select.c \
               src/parser/update.c src/parser/delete.c
 # The executor, one file per statement plus what they share.

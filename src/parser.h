@@ -132,57 +132,6 @@ typedef struct {
     int value_count;
 } InsertStatement;
 
-typedef enum {
-    CMP_EQUAL,
-    CMP_NOT_EQUAL,
-    CMP_LESS,
-    CMP_LESS_EQUAL,
-    CMP_GREATER,
-    CMP_GREATER_EQUAL,
-    CMP_IS_NULL,
-    CMP_IS_NOT_NULL
-} CompareOp;
-
-// A column compared with a value: `age > 18`, or tested for NULL:
-// `age IS NULL`, for which value is unused. A comparison's value is
-// never NULL; the parser points the user to IS NULL instead.
-typedef struct {
-    char column[MAX_TOKEN_LENGTH];
-    CompareOp op;
-    Literal value;
-} Comparison;
-
-typedef enum {
-    COND_COMPARE,
-    COND_AND,
-    COND_OR,
-    COND_NOT
-} ConditionType;
-
-// One node of a WHERE condition tree. Nodes refer to their children by
-// index into WhereClause.conditions rather than by pointer, so the
-// tree lives in a fixed-size array and there's nothing to free.
-typedef struct {
-    ConditionType type;
-    union {
-        Comparison compare;  // COND_COMPARE
-        struct {
-            int left;
-            int right;       // Unused for COND_NOT.
-        } children;          // COND_AND, COND_OR, COND_NOT
-    } as;
-} Condition;
-
-// `a = 1 AND NOT b = 2` uses four nodes: two comparisons, NOT and AND.
-#define MAX_CONDITIONS 64
-
-// The condition after WHERE, shared by SELECT and DELETE.
-typedef struct {
-    Condition conditions[MAX_CONDITIONS];
-    int condition_count;
-    int root;  // Index of the node for the whole condition.
-} WhereClause;
-
 // A function over all the matching rows: `COUNT(*)` or `SUM(price)`.
 typedef struct {
     AggregateFunc func;
@@ -200,7 +149,7 @@ typedef struct {
     int aggregate_count;
 
     int has_where;   // 1 if there's a WHERE, otherwise where is unused.
-    WhereClause where;
+    int where;       // The root node of a BOOL expression.
 
     int has_order;   // 1 if there's an ORDER BY, otherwise rows keep
                      // the order they were inserted in.
@@ -213,7 +162,7 @@ typedef struct {
 
 typedef struct {
     int has_where;   // 0 deletes every row.
-    WhereClause where;
+    int where;       // The root node of a BOOL expression.
 } DeleteStatement;
 
 // A column given a new value in UPDATE: `age = 26` or `stock = stock - ?`.
@@ -227,7 +176,7 @@ typedef struct {
     int assignment_count;
 
     int has_where;   // 0 updates every row.
-    WhereClause where;
+    int where;       // The root node of a BOOL expression.
 } UpdateStatement;
 
 typedef enum {
