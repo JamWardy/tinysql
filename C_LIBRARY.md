@@ -48,7 +48,7 @@ helper. Prefer these to the raw calls.
 | `fprintf(stream, format, ...)` | `printf` to a chosen stream. We use `stderr` for errors before the prompt starts. | `main.c` |
 | `puts(s)` | Prints `s` and a newline. | `commands.c`, `main.c`, `input.c` |
 | `putchar(c)` | Prints one character. | `print.c`, `commands.c` |
-| `snprintf(buf, size, format, ...)` | `printf` into `buf` instead of the terminal. Writes at most `size - 1` characters plus `'\0'`, cutting the text short if needed. Returns the length the full text *would* have had. | `executor/common.c`, `executor/schema.c`, `executor/select.c`, `parser.c`, `print.c` |
+| `snprintf(buf, size, format, ...)` | `printf` into `buf` instead of the terminal. Writes at most `size - 1` characters plus `'\0'`, cutting the text short if needed. Returns the length the full text *would* have had. | `executor/common.c`, `executor/schema.c`, `executor/select.c`, `parser/common.c`, `print.c` |
 | `vsnprintf(buf, size, format, args)` | `snprintf` taking a `va_list` instead of `...`. It's how one variadic function passes its arguments on to another. | `error.c`, `persist.c` |
 | `fgets(buf, size, stream)` | Reads one line, including its `'\n'`, into `buf`. Stops early if `buf` fills up, leaving the rest of the line unread. Returns `NULL` at end of input. | `input.c` |
 | `getchar()` | Reads one character from stdin. Returns `EOF` at end of input, so the result is an `int`, not a `char`. | `input.c` |
@@ -106,7 +106,7 @@ you. The codes we use:
 | `calloc(count, size)` | Allocates room for `count` items of `size` bytes, all set to zero. | `table.c`, `index.c`, `executor/update.c` |
 | `realloc(p, n)` | Resizes an allocation. It may move the data, so it returns the new address, and on failure it returns `NULL` but leaves `p` as it was. That's why the result goes into a new variable before replacing the old pointer. | `table.c`, `result.c` |
 | `free(p)` | Gives an allocation back. Using `p` afterwards is a bug. `free(NULL)` does nothing. | `executor/` (`where.c`, `select.c`, `update.c`, `delete.c`), `index.c`, `persist.c`, `result.c`, `table.c` |
-| `strtoll(text, end, base)` | Converts text to a `long long`. On overflow it returns the largest value and sets `errno` to `ERANGE`. | `parser.c` |
+| `strtoll(text, end, base)` | Converts text to a `long long`. On overflow it returns the largest value and sets `errno` to `ERANGE`. | `parser/common.c`, `parser/select.c` |
 | `qsort(array, count, size, compare)` | Sorts any array, calling `compare(a, b)` on pairs of elements. `compare` returns negative, 0 or positive like `strcmp`. | `executor/select.c`, for `ORDER BY` |
 
 `malloc(0)` and `calloc(0, ...)` may return `NULL` without having
@@ -150,7 +150,7 @@ a particular call, set `errno = 0` just before it. We check:
 
 | Code | Meaning | Where |
 |---|---|---|
-| `ERANGE` | A number didn't fit | After `strtoll` in `parser.c` |
+| `ERANGE` | A number didn't fit | After `strtoll` in `parser/` |
 | `ENOENT` | No such file | After `fopen` in `persist.c`: no database file yet, so start empty |
 
 Read `errno` straight after the call that failed. Another call in
@@ -162,7 +162,7 @@ between, even `remove`, may change it.
 and line if `condition` is false. It's for things that can only go wrong
 through a bug in TinySQL, such as an index past the end of an array. It
 isn't for bad input from the user or the file; those get an error
-message. Used in `index.c`, `parser.c`, `persist.c`, `table.c` and
+message. Used in `index.c`, `parser/`, `persist.c`, `table.c` and
 `text.c`.
 
 ## Types and limits

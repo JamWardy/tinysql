@@ -136,6 +136,12 @@ reasoning. In short:
   goes first. A function shared between files starts with its file's
   name (`where_resolve`, `common_find_table`), except the statements'
   `execute_create`, `execute_select` and so on.
+- **The parser is a folder too**, `src/parser/`, laid out the same way:
+  one file per statement, `where.c` for `WHERE`, `common.c` for reading
+  tokens and values, and `parser.c` for `parse`. `src/parser.h` is its
+  only public header. Its shared functions keep short names (`expect`,
+  `match`, `parse_value`, `parse_where`), as nearly every line calls
+  them.
 - **The REPL is a folder**, `src/repl/`: `main.c`, `input.c`,
   `print.c` and `commands.c`, built into the `tinysql` program and not
   into `libtinysql.a`. Everything else in `src/` is the library.

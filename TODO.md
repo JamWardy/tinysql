@@ -80,6 +80,7 @@ Smaller tidy-ups:
       call to the function body
 - [x] Split `executor.c` (1,250 lines) into `src/executor/`, one file
       per statement, as `CONVENTIONS.md` describes
+- [x] Split `parser.c` (980 lines) into `src/parser/` the same way
 
 ## Goal: a toy online shop
 
