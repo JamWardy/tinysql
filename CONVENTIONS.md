@@ -80,7 +80,7 @@ reasoning. In short:
 | Use | When |
 |---|---|
 | Stack | The default, for anything that's only needed until the function returns |
-| Static | Only for something too big for the stack that's reused (`tokens` and `stmt` in `tinysql_run`), or when a library leaves no other way (`sort_by`, for `qsort`). Comment why |
+| Static | Only for something too big for the stack that's reused (`tokens` and `stmt` in `tinysql_run`), or when a library leaves no other way (`sort_descending`, for `qsort`). Comment why |
 | Heap | Data whose size is only known while running, or that outlives the function. Every `malloc` has one clear owner who frees it |
 
 ## Values and types
@@ -128,8 +128,9 @@ reasoning. In short:
   `"project"` headers, each group alphabetical.
 - **The executor is a folder**, `src/executor/`: one file per statement
   (`schema.c` for `CREATE` and `DROP`, `insert.c`, `select.c`,
-  `update.c`, `delete.c`), `where.c` for `WHERE`, `common.c` for what
-  most statements share, and `executor.c` for `execute`, which picks
+  `update.c`, `delete.c`), `expr.c` for checking and evaluating
+  expressions, `where.c` for `WHERE`, `common.c` for what most
+  statements share, and `executor.c` for `execute`, which picks
   the statement's function. `src/executor.h` is the folder's only
   public header; `internal.h` is shared between the folder's files and
   is included nowhere else. It counts as each file's own header, so
@@ -137,7 +138,8 @@ reasoning. In short:
   name (`where_resolve`, `common_find_table`), except the statements'
   `execute_create`, `execute_select` and so on.
 - **The parser is a folder too**, `src/parser/`, laid out the same way:
-  one file per statement, `where.c` for `WHERE`, `common.c` for reading
+  one file per statement, `expr.c` for expressions (and `WHERE`),
+  `deparse.c` for turning them back into SQL, `common.c` for reading
   tokens and values, and `parser.c` for `parse`. `src/parser.h` is its
   only public header. Its shared functions keep short names (`expect`,
   `match`, `parse_value`, `parse_where`), as nearly every line calls

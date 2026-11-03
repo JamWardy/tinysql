@@ -175,7 +175,7 @@ int parse_value(Parser *p, Literal *out) {
         *out = literal_param(p);
     } else {
         error_expected(p, negative ? "number after '-'"
-                                   : "value (number, 'text', NULL or ?)");
+                                   : "value (number, 'text', TRUE, FALSE, NULL or ?)");
         return 0;
     }
 

@@ -2,7 +2,7 @@
 
 #include "text.h"
 
-// delete_stmt = DELETE FROM IDENTIFIER [ WHERE condition ]
+// delete_stmt = DELETE FROM IDENTIFIER [ WHERE expr ]
 int parse_delete(Parser *p, Statement *out) {
     DeleteStatement *delete = &out->as.delete;
 

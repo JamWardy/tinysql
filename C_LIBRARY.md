@@ -48,8 +48,8 @@ helper. Prefer these to the raw calls.
 | `fprintf(stream, format, ...)` | `printf` to a chosen stream. We use `stderr` for errors before the prompt starts. | `main.c` |
 | `puts(s)` | Prints `s` and a newline. | `commands.c`, `main.c`, `input.c` |
 | `putchar(c)` | Prints one character. | `print.c`, `commands.c` |
-| `snprintf(buf, size, format, ...)` | `printf` into `buf` instead of the terminal. Writes at most `size - 1` characters plus `'\0'`, cutting the text short if needed. Returns the length the full text *would* have had. | `executor/common.c`, `executor/schema.c`, `executor/select.c`, `parser/common.c`, `print.c` |
-| `vsnprintf(buf, size, format, args)` | `snprintf` taking a `va_list` instead of `...`. It's how one variadic function passes its arguments on to another. | `error.c`, `persist.c` |
+| `snprintf(buf, size, format, ...)` | `printf` into `buf` instead of the terminal. Writes at most `size - 1` characters plus `'\0'`, cutting the text short if needed. Returns the length the full text *would* have had. | `executor/common.c`, `executor/expr.c`, `executor/schema.c`, `parser/common.c`, `print.c` |
+| `vsnprintf(buf, size, format, args)` | `snprintf` taking a `va_list` instead of `...`. It's how one variadic function passes its arguments on to another. | `error.c`, `persist.c`, `parser/deparse.c` |
 | `fgets(buf, size, stream)` | Reads one line, including its `'\n'`, into `buf`. Stops early if `buf` fills up, leaving the rest of the line unread. Returns `NULL` at end of input. | `input.c` |
 | `getchar()` | Reads one character from stdin. Returns `EOF` at end of input, so the result is an `int`, not a `char`. | `input.c` |
 | `fflush(stream)` | Sends buffered output now. The `sql> ` prompt has no newline, so without this it might not appear before we wait for input. | `input.c` |
@@ -102,7 +102,7 @@ you. The codes we use:
 
 | Function | What it does | Used in |
 |---|---|---|
-| `malloc(n)` | Allocates `n` bytes on the heap. Returns `NULL` if memory ran out. The bytes start with whatever was there before. | `executor/where.c`, `persist.c`, `table.c` |
+| `malloc(n)` | Allocates `n` bytes on the heap. Returns `NULL` if memory ran out. The bytes start with whatever was there before. | `executor/` (`where.c`, `select.c`, `update.c`), `persist.c`, `table.c` |
 | `calloc(count, size)` | Allocates room for `count` items of `size` bytes, all set to zero. | `table.c`, `index.c`, `executor/update.c` |
 | `realloc(p, n)` | Resizes an allocation. It may move the data, so it returns the new address, and on failure it returns `NULL` but leaves `p` as it was. That's why the result goes into a new variable before replacing the old pointer. | `table.c`, `result.c` |
 | `free(p)` | Gives an allocation back. Using `p` afterwards is a bug. `free(NULL)` does nothing. | `executor/` (`where.c`, `select.c`, `update.c`, `delete.c`), `index.c`, `persist.c`, `result.c`, `table.c` |
@@ -140,7 +140,8 @@ extra arguments. It reads them with:
 | `va_end(args)` | Finishes. Must be called before returning |
 
 You can't pass `...` straight on to `snprintf`, so `fail` passes the
-`va_list` to `vsnprintf` instead. Used in `error.c` and `persist.c`.
+`va_list` to `vsnprintf` instead. Used in `error.c`, `persist.c` and
+`parser/deparse.c`.
 
 ## `<errno.h>`: why a call failed
 
@@ -171,7 +172,7 @@ message. Used in `index.c`, `parser/`, `persist.c`, `table.c` and
 |---|---|---|
 | `size_t` | `<stddef.h>` | An unsigned integer for sizes and counts. It's what `sizeof` and `strlen` give |
 | `NULL` | `<stddef.h>` | The "points nowhere" pointer. Nothing to do with SQL's `NULL`, which a `Value` stores as `TYPE_NULL` |
-| `LLONG_MAX`, `LLONG_MIN` | `<limits.h>` | The largest and smallest `long long`. `SUM` checks against them before adding, and the loader uses `LLONG_MAX` to turn stored integers back into signed ones |
+| `LLONG_MAX`, `LLONG_MIN` | `<limits.h>` | The largest and smallest `long long`. Arithmetic and `SUM` check against them first, and the loader uses `LLONG_MAX` to turn stored integers back into signed ones |
 | `uint64_t` | `<stdint.h>` | An unsigned integer of exactly 64 bits, for the file format and index hashes |
 | `UINT32_MAX` | `<stdint.h>` | The largest 32-bit unsigned value, the most a string length in the file can be |
 | `UINT8_MAX` | `<stdint.h>` | The largest 8-bit unsigned value, the most constraints a table's count byte in the file can hold |

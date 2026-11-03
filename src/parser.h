@@ -132,28 +132,23 @@ typedef struct {
     int value_count;
 } InsertStatement;
 
-// A function over all the matching rows: `COUNT(*)` or `SUM(price)`.
+// One item in a SELECT list: `price * quantity AS total`.
 typedef struct {
-    AggregateFunc func;
-    char column[MAX_TOKEN_LENGTH];  // Empty for COUNT(*).
-} Aggregate;
+    int expr;                      // The root node.
+    char alias[MAX_TOKEN_LENGTH];  // From AS, or empty.
+} SelectItem;
 
 typedef struct {
-    // Exactly one of these lists is used. There's no GROUP BY, so a
-    // SELECT can't mix columns with aggregates.
-    int select_all;      // 1 for SELECT *.
-    int has_aggregates;  // 1 for aggregates, e.g. SELECT COUNT(*), ...
-    char columns[MAX_COLUMNS][MAX_TOKEN_LENGTH];
-    int column_count;
-    Aggregate aggregates[MAX_COLUMNS];
-    int aggregate_count;
+    int select_all;  // 1 for SELECT *, which has no items.
+    SelectItem items[MAX_COLUMNS];
+    int item_count;
 
     int has_where;   // 1 if there's a WHERE, otherwise where is unused.
     int where;       // The root node of a BOOL expression.
 
     int has_order;   // 1 if there's an ORDER BY, otherwise rows keep
                      // the order they were inserted in.
-    char order_column[MAX_TOKEN_LENGTH];
+    int order_by;    // The root node of the expression to sort by.
     int descending;  // 1 for DESC; ASC is the default.
 
     int has_limit;   // 1 if there's a LIMIT, otherwise every row.

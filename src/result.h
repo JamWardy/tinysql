@@ -6,8 +6,8 @@
 #include "parser.h"  // For DataType, StatementType and MAX_COLUMNS.
 #include "table.h"   // For Value.
 
-// Room for a column name, or an aggregate heading such as "COUNT(name)":
-// the longest function name, the column name, "(" and ")".
+// Room for a column or AS name, or a short expression heading such as
+// "COUNT(name)" or "price * quantity"; longer ones are cut short.
 #define MAX_HEADING (MAX_TOKEN_LENGTH + 8)
 
 // What a statement gives back. A SELECT fills the columns and rows; the

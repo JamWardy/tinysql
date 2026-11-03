@@ -33,17 +33,13 @@ Done:
 - [x] `INSERT` with column names, `INSERT INTO users (email,
       password_hash) VALUES (?, ?)`, leaving the others `NULL`, as
       `GRAMMAR.md` describes under "Inserting"
+- [x] Expressions, as `GRAMMAR.md` describes under "Expressions",
+      such as `SET stock = stock - ?`: one tree per statement for
+      `SET`, `VALUES`, `WHERE`, the `SELECT` list (with `AS`) and
+      `ORDER BY`, with `BOOL`, `TRUE` and `FALSE`
 
 Next, roughly in order, towards a toy online shop (see "Goal" below):
 
-- [ ] Expressions, as `GRAMMAR.md` describes under "Expressions",
-      such as `SET stock = stock - ?`, in three steps:
-  - [ ] The expression tree, its parser and `executor/expr.c`, with
-        `SET` and `VALUES` using it
-  - [ ] `WHERE` as an expression, with `BOOL`, `TRUE`, `FALSE` and the
-        key lookup
-  - [ ] `SELECT` items, aggregates over expressions, `ORDER BY` and
-        `AS`
 - [ ] Transactions: `BEGIN`, `COMMIT` and `ROLLBACK`
 - [ ] `SELECT ... FOR UPDATE`, to lock the item row. Accepted and
       needs nothing more, as the server runs one transaction at a time
@@ -111,10 +107,6 @@ check, `SELECT SUM(quantity) FROM orders WHERE item_id = ? AND status =
 
 Why each item in the list is needed:
 
-- **Arithmetic.** Confirming an order lowers the stock: `UPDATE items
-  SET stock = stock - ? WHERE id = ?`. Today `SET` only takes a literal.
-  The row is locked, so the app could read the stock and write the new
-  value instead, but this is one statement, not two.
 - **Transactions.** Reserving is several statements: lock the item,
   count what's reserved, insert the order. If another order slips in
   between, the item is oversold. Since the database is in memory and

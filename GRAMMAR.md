@@ -32,37 +32,40 @@ table_key     = ( PRIMARY KEY | UNIQUE )
 
 insert_stmt   = INSERT INTO IDENTIFIER
                 [ LPAREN IDENTIFIER { COMMA IDENTIFIER } RPAREN ]
-                VALUES LPAREN value { COMMA value } RPAREN
+                VALUES LPAREN expr { COMMA expr } RPAREN
 
-value         = [ MINUS ] NUMBER | STRING | NULL | PARAM
-
-select_stmt   = SELECT select_list FROM IDENTIFIER [ WHERE condition ]
-                [ ORDER BY IDENTIFIER [ ASC | DESC ] ]
+select_stmt   = SELECT select_list FROM IDENTIFIER [ WHERE expr ]
+                [ ORDER BY expr [ ASC | DESC ] ]
                 [ LIMIT ( NUMBER | PARAM ) ]
-select_list   = STAR
-              | aggregate { COMMA aggregate }
-              | IDENTIFIER { COMMA IDENTIFIER }
-aggregate     = COUNT LPAREN ( STAR | IDENTIFIER ) RPAREN
-              | ( SUM | MIN | MAX ) LPAREN IDENTIFIER RPAREN
+select_list   = STAR | select_item { COMMA select_item }
+select_item   = expr [ AS IDENTIFIER ]
 
-delete_stmt   = DELETE FROM IDENTIFIER [ WHERE condition ]
+delete_stmt   = DELETE FROM IDENTIFIER [ WHERE expr ]
 
 update_stmt   = UPDATE IDENTIFIER
-                SET assignment { COMMA assignment } [ WHERE condition ]
-assignment    = IDENTIFIER EQUAL value
+                SET assignment { COMMA assignment } [ WHERE expr ]
+assignment    = IDENTIFIER EQUAL expr
 
 drop_stmt     = DROP TABLE IDENTIFIER
 
-condition     = and_condition { OR and_condition }
-and_condition = not_condition { AND not_condition }
-not_condition = NOT not_condition
-              | LPAREN condition RPAREN
-              | comparison
-comparison    = IDENTIFIER compare_op value
-              | IDENTIFIER IS [ NOT ] NULL
+expr          = and_expr { OR and_expr }
+and_expr      = not_expr { AND not_expr }
+not_expr      = NOT not_expr | comparison
+comparison    = additive [ compare_op additive | IS [ NOT ] NULL ]
 compare_op    = EQUAL | NOT_EQUAL | LESS | LESS_EQUAL
               | GREATER | GREATER_EQUAL
+additive      = multiplicative { ( PLUS | MINUS ) multiplicative }
+multiplicative = unary { ( STAR | SLASH | PERCENT ) unary }
+unary         = MINUS unary | primary
+primary       = value | IDENTIFIER | aggregate | LPAREN expr RPAREN
+aggregate     = COUNT LPAREN ( STAR | expr ) RPAREN
+              | ( SUM | MIN | MAX ) LPAREN expr RPAREN
+value         = [ MINUS ] NUMBER | STRING | TRUE | FALSE | NULL | PARAM
 ```
+
+A `MINUS` right before a `NUMBER` is read as part of the number, not
+as `unary`, so `-9223372036854775808` fits although its digits alone
+don't.
 
 ## Examples
 
@@ -82,6 +85,7 @@ INSERT INTO users VALUES (-3, 'Eve', 30);
 INSERT INTO users VALUES (2, NULL, NULL);    -- any column can be NULL
 INSERT INTO users VALUES (4, 'O''Brien', 40);  -- '' is one quote
 INSERT INTO users (name, id) VALUES ('Ann', 5);  -- age is left NULL
+INSERT INTO users VALUES (6, 'Al', 2 * (10 + 3));
 SELECT * FROM users;
 SELECT name, age FROM users;
 SELECT * FROM users WHERE age >= 18;
@@ -100,6 +104,11 @@ UPDATE users SET age = 26 WHERE name = 'Alice';
 UPDATE users SET name = 'Anon', age = 0;      -- updates every row
 UPDATE users SET age = NULL WHERE id = 2;
 SELECT * FROM users WHERE name = ? AND age > ?;  -- values passed apart
+SELECT * FROM users WHERE 18 <= age;          -- either side
+UPDATE items SET stock = stock - ? WHERE id = ?;
+SELECT name, price * qty AS total FROM items ORDER BY price * qty DESC;
+SELECT SUM(price * qty), MAX(price) - MIN(price) FROM items;
+SELECT name, age >= 18 FROM users;            -- true or false
 DROP TABLE users;
 ```
 
@@ -114,28 +123,24 @@ CREATE TABLE t (a INT, PRIMARY KEY a);   -- key columns go in ( )
 CREATE TABLE t (PRIMARY KEY (a));        -- needs at least one column
 CREATE TABLE t (a INT, UNIQUE a);        -- key columns go in ( )
 INSERT INTO users VALUES (1, 2,);  -- trailing comma
-INSERT INTO users VALUES (- -1);   -- only one '-'
-INSERT INTO users VALUES (-'a');   -- '-' only before a number
-INSERT INTO users VALUES (-NULL);  -- or NULL
 INSERT INTO users VALUES (4, 'O'Brien', 40);  -- write the quote as ''
 INSERT INTO users () VALUES ();    -- name at least one column
 INSERT INTO users (id, name) VALUES (1);  -- one value per column
 SELECT * FROM users                -- missing semicolon
 SELECT *, name FROM users;         -- '*' can't be mixed with columns
 SELECT * FROM users; SELECT 1;     -- one statement at a time
-SELECT * FROM users WHERE 18 < age;   -- column must come first
+SELECT * FROM users WHERE a < b < c;  -- comparisons don't chain
 SELECT * FROM users WHERE age = NULL;          -- use IS NULL (see below)
 SELECT * FROM users WHERE age IS 18;           -- IS only tests for NULL
 SELECT * FROM users WHERE age > 1 AND;         -- AND needs a right side
 SELECT * FROM users WHERE (age > 1;            -- unclosed '('
 SELECT * FROM users LIMIT 3 ORDER BY age;      -- ORDER BY comes first
-SELECT * FROM users ORDER BY age, name;        -- one sort column only
-SELECT name, COUNT(*) FROM users;              -- no mixing (no GROUP BY)
+SELECT * FROM users ORDER BY age, name;        -- one sort expression only
 SELECT * FROM users LIMIT -1;                  -- LIMIT can't be negative
 DELETE users WHERE id = 1;                     -- needs FROM
 DELETE * FROM users;                           -- no column list
 UPDATE users age = 26;                         -- needs SET
-UPDATE users SET age = age + 1;                -- values only, no expressions
+SELECT a, FROM users;                          -- trailing comma
 DROP users;                                    -- needs TABLE
 DROP TABLE a, b;                               -- one table at a time
 ```
@@ -146,6 +151,12 @@ The parser checks only shape. These are the executor's job, because they
 depend on what tables exist:
 
 - the table exists (or, for `CREATE`, doesn't already exist)
+- every column an expression names exists, and each operator gets the
+  types it takes (see "Expressions")
+- a `WHERE` is a `BOOL`; `VALUES` reads no columns; aggregates aren't
+  in `WHERE`, `SET` or `VALUES`, nor inside another aggregate
+- a `SELECT` with an aggregate reads columns only inside aggregates,
+  as there's no `GROUP BY`: `SELECT name, COUNT(*)` is an error
 - column names are unique within a `CREATE TABLE`
 - each `PRIMARY KEY` and `UNIQUE` column is one of the table's columns,
   named once in that key
@@ -158,11 +169,6 @@ depend on what tables exist:
   right types, or to `NULL` if the column isn't `NOT NULL`
 - no two rows have the same primary key or unique key, after an
   `INSERT` or `UPDATE`
-- `SELECT` names columns that exist, including the `ORDER BY` column
-  and the columns inside aggregates
-- `SUM` is given an `INT` column
-- the `WHERE` columns exist, in `SELECT`, `UPDATE` and `DELETE`
-- each `WHERE` value has the same type as its column
 - there's one value for each `?`, and a `LIMIT ?`'s is a non-negative
   `INT`
 
@@ -245,6 +251,11 @@ a comparison, as in `age = NULL`, is still an error pointing to
 Every expression in a `SET` reads the row as it was before the
 `UPDATE`, so `SET a = b, b = a` swaps the two, as in standard SQL.
 
+### Keywords
+
+`AS`, `TRUE` and `FALSE` are keywords, so they can't be used as table
+or column names.
+
 ### Headings
 
 A `SELECT` item's column is headed by its `AS` name, or its column's
@@ -305,29 +316,34 @@ and comments is `;`.
 
 `INT` values compare as numbers. `TEXT` values compare byte by byte, so
 uppercase sorts before lowercase (`'B' < 'a'`) and digits compare as
-characters (`'10' < '9'`).
+characters (`'10' < '9'`). `BOOL`s compare with `false` first.
 
 ## Ordering and limiting
 
 `SELECT` filters with `WHERE`, then sorts with `ORDER BY`, then keeps
 the first `LIMIT` rows. Without `ORDER BY`, rows come out in the order
 they were inserted. Rows with equal sort values also keep that order.
-The `ORDER BY` column doesn't have to be one of the selected columns.
+`ORDER BY` takes any expression of the row, such as `price * qty`, and
+it doesn't have to be one of the selected items.
 
 ## Aggregates
 
 `COUNT`, `SUM`, `MIN` and `MAX` read every row that matches the
 `WHERE` and give a single result row. `COUNT(*)` counts those rows.
-`SUM` adds an `INT` column, and fails if the total doesn't fit in one.
-`MIN` and `MAX` take either type, comparing values as described above.
+Each of the others works out its expression for every row:
+`SUM(price * qty)` adds them up, and fails if the total doesn't fit in
+an `INT`. `MIN` and `MAX` take `INT` or `TEXT`, comparing values as
+described above. Aggregates can go inside expressions too, as in
+`MAX(age) - MIN(age)` or `COUNT(*) + 1`.
 
-`COUNT(*)` counts rows, including ones with `NULL`s. `COUNT(column)`
-counts only the rows where that column isn't `NULL`. `SUM`, `MIN` and
-`MAX` skip `NULL`s, and give `NULL` when there's nothing else to use: no
-matching rows, or only `NULL`s. `COUNT` gives 0 instead.
+`COUNT(*)` counts rows, including ones with `NULL`s. `COUNT(x)` counts
+only the rows where `x` isn't `NULL`. `SUM`, `MIN` and `MAX` skip
+`NULL`s, and give `NULL` when there's nothing else to use: no matching
+rows, or only `NULL`s. `COUNT` gives 0 instead.
 
-There's only ever one result row, so `ORDER BY` changes nothing and
-`LIMIT` matters only when it's 0. `COUNT`, `SUM`, `MIN` and `MAX` are
+There's no `GROUP BY`, so a `SELECT` with an aggregate gives one row,
+and reads columns only inside aggregates. So `ORDER BY` changes nothing
+and `LIMIT` matters only when it's 0. `COUNT`, `SUM`, `MIN` and `MAX` are
 keywords, so they can't be used as table or column names.
 
 ## NULL

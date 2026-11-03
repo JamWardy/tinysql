@@ -20,7 +20,7 @@ static int parse_assignment(Parser *p, Assignment *out) {
 }
 
 // update_stmt = UPDATE IDENTIFIER
-//               SET assignment { COMMA assignment } [ WHERE condition ]
+//               SET assignment { COMMA assignment } [ WHERE expr ]
 int parse_update(Parser *p, Statement *out) {
     UpdateStatement *update = &out->as.update;
 
