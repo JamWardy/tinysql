@@ -54,6 +54,8 @@ Next, roughly in order, towards a toy online shop (see "Goal" below):
       it under "Key decisions". Errors carry a code as well as the
       message, so a service can tell a broken `UNIQUE` constraint
       (its `409`, or an order's retry) from any other failure
+- [ ] Lock the database file while it's open, so a second process
+      can't open it, as `../DESIGN.md` describes under "Key decisions"
 - [ ] Replication, for search's read replica, as `../DESIGN.md`
       describes it
 
@@ -125,6 +127,8 @@ Why each item in the list is needed:
   `title LIKE ?`, with `'%shoe%'` as the value.
 - **A server.** The services talk to TinySQL over a socket; see
   `../DESIGN.md` for why.
+- **The file lock.** Two processes on one file each save their own
+  copy, and the last save wins; see `../DESIGN.md`.
 - **Replication.** Search reads a replica, so search load never slows
   ordering. The replica may be a few seconds behind.
 
