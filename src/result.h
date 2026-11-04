@@ -10,8 +10,9 @@
 // "COUNT(name)" or "price * quantity"; longer ones are cut short.
 #define MAX_HEADING (MAX_TOKEN_LENGTH + 8)
 
-// What a statement gives back. A SELECT fills the columns and rows; the
-// other statements leave them empty and set changed instead.
+// What a statement gives back. A SELECT, or an INSERT with RETURNING,
+// fills the columns and rows; the other statements leave them empty.
+// INSERT, UPDATE and DELETE set changed.
 //
 // The Result owns copies of its values, so they stay valid however the
 // database changes, until result_free.

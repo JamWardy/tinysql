@@ -57,6 +57,9 @@ static void print_create(const Table *table) {
         }
     }
 
+    size_t id_column;
+    int has_id = table_autoincrement_column(table, &id_column);
+
     printf("CREATE TABLE %s (", table->name);
 
     for (size_t i = 0; i < table->column_count; i++) {
@@ -78,6 +81,10 @@ static void print_create(const Table *table) {
                 constraint->columns.positions[0] == i) {
                 printf(" %s", constraint_kind_name(constraint->kind));
             }
+        }
+
+        if (has_id && i == id_column) {
+            printf(" AUTOINCREMENT");
         }
     }
 

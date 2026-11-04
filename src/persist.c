@@ -20,6 +20,7 @@
 //                u8 constraint_count
 //                per constraint: u8 kind  u8 column_count
 //                                per column: u8 position
+//                u8 autoincrement  u64 last_id
 //                u64 row_count
 //                per row:    null bitmap
 //                            per non-null value: INT as u64, TEXT as string
@@ -38,21 +39,27 @@
 // A column's flags byte has bit 0 set for NOT NULL; the other bits are 0.
 // A NOT NULL column has no NULLs, so its bitmap bit is never set.
 //
+// autoincrement is 1 if INSERT chooses IDs for the PRIMARY KEY, which
+// must then be one INT column, or 0. last_id is the highest ID that key
+// has had, never below any in its rows and at most the highest INT; it's
+// 0 when autoincrement is.
+//
 // A constraint's kind is 1 for PRIMARY KEY or 2 for UNIQUE, and its
 // columns are positions in the table, in key order. A table has at most
 // one PRIMARY KEY, whose columns are NOT NULL, and no two rows with the
 // same key, leaving out UNIQUE keys with a NULL. Indexes aren't stored:
 // they're rebuilt as rows are read.
 //
-// Older versions are still read, and are saved as version 5:
-//   version 4 has no UNIQUE.
+// Older versions are still read, and are saved as version 6:
+//   version 5 has no AUTOINCREMENT, and no last_id.
+//   version 4 also has no UNIQUE.
 //   version 3 has no constraints.
 //   version 2 also has no flags byte: no column is NOT NULL.
 //   version 1 also has no bitmap: nothing is NULL.
 
 #define MAGIC "TSQL"
 #define MAGIC_LENGTH 4
-#define FORMAT_VERSION 5
+#define FORMAT_VERSION 6
 
 // Type codes in the file. Fixed here rather than taken from DataType,
 // so reordering that enum can't change the meaning of existing files.
@@ -157,6 +164,8 @@ static void write_table(FILE *file, const Table *table) {
         }
     }
 
+    write_uint(file, table->autoincrement ? 1 : 0, 1);
+    write_uint(file, (uint64_t)table->last_id, 8);
     write_uint(file, table->row_count, 8);
 
     for (size_t r = 0; r < table->row_count; r++) {
@@ -423,6 +432,15 @@ static int read_row(Reader *r, Table *table) {
         }
     }
 
+    size_t id_column;
+
+    if (table_autoincrement_column(table, &id_column) &&
+        values[id_column].as.integer > table->last_id) {
+        values_free(values, table->column_count);
+        return read_fail(r, "table '%s' has an ID above its last ID",
+                         table->name);
+    }
+
     for (size_t i = 0; i < table->constraint_count; i++) {
         size_t other;
 
@@ -558,6 +576,45 @@ static int read_constraints(Reader *r, Table *table) {
     return 1;
 }
 
+// Reads whether table chooses IDs, and its last ID, which files before
+// version 6 don't have. Checks a table that chooses IDs has a PRIMARY
+// KEY of one INT column.
+static int read_autoincrement(Reader *r, Table *table) {
+    uint64_t autoincrement = 0;
+    uint64_t last_id = 0;
+
+    if (r->version >= 6 &&
+        (!read_uint(r, 1, &autoincrement) || !read_uint(r, 8, &last_id))) {
+        return 0;
+    }
+    if (autoincrement > 1 || last_id > LLONG_MAX ||
+        (!autoincrement && last_id != 0)) {
+        return read_fail(r, "table '%s' has a bad AUTOINCREMENT or last ID",
+                         table->name);
+    }
+
+    table->autoincrement = (int)autoincrement;
+    table->last_id = (long long)last_id;
+
+    if (!table->autoincrement) {
+        return 1;
+    }
+
+    const Constraint *key = NULL;
+
+    for (size_t k = 0; k < table->constraint_count; k++) {
+        if (table->constraints[k].kind == CONSTRAINT_PRIMARY_KEY) {
+            key = &table->constraints[k];
+        }
+    }
+    if (!key || key->columns.count != 1 ||
+        table->columns[key->columns.positions[0]].type != TYPE_INT) {
+        return read_fail(r, "table '%s' has AUTOINCREMENT, but its "
+                         "PRIMARY KEY isn't one INT column", table->name);
+    }
+    return 1;
+}
+
 static int read_table(Reader *r, Database *db) {
     char name[MAX_TOKEN_LENGTH];
     ColumnDef columns[MAX_COLUMNS];
@@ -600,7 +657,7 @@ static int read_table(Reader *r, Database *db) {
 
     // No other table is created while reading constraints and rows, so
     // table stays valid.
-    if (!read_constraints(r, table)) {
+    if (!read_constraints(r, table) || !read_autoincrement(r, table)) {
         return 0;
     }
 

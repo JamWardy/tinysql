@@ -64,6 +64,8 @@ typedef enum {
     TOKEN_COMMIT,
     TOKEN_ROLLBACK,
     TOKEN_FOR,
+    TOKEN_AUTOINCREMENT,
+    TOKEN_RETURNING,
     TOKEN_EOF
 } TokenType;
 

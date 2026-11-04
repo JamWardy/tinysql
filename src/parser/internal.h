@@ -34,6 +34,10 @@ int parse_insert(Parser *p, Statement *out);
 // select.c
 int parse_select(Parser *p, Statement *out);
 
+// Parses a SELECT list into out: `*`, or items with AS. INSERT's
+// RETURNING uses it too.
+int parse_select_list(Parser *p, SelectList *out);
+
 // update.c
 int parse_update(Parser *p, Statement *out);
 

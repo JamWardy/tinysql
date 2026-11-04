@@ -52,7 +52,7 @@ static int add_column_key(Parser *p, CreateStatement *create,
 //
 // column_def        = IDENTIFIER column_type { column_constraint }
 // column_type       = INT | TEXT
-// column_constraint = NOT NULL | PRIMARY KEY | UNIQUE
+// column_constraint = NOT NULL | PRIMARY KEY | UNIQUE | AUTOINCREMENT
 static int parse_column_def(Parser *p, CreateStatement *create) {
     if (create->column_count == MAX_COLUMNS) {
         return fail(p->error, sizeof(p->error),
@@ -92,6 +92,13 @@ static int parse_column_def(Parser *p, CreateStatement *create) {
             if (!add_column_key(p, create, CONSTRAINT_UNIQUE, out->name)) {
                 return 0;
             }
+        } else if (match(p, TOKEN_AUTOINCREMENT)) {
+            if (create->has_autoincrement) {
+                return fail(p->error, sizeof(p->error),
+                            "a table can have only one AUTOINCREMENT");
+            }
+            create->has_autoincrement = 1;
+            create->autoincrement_column = create->column_count;
         } else {
             break;
         }
@@ -157,6 +164,7 @@ int parse_create(Parser *p, Statement *out) {
     CreateStatement *create = &out->as.create;
     create->column_count = 0;
     create->key_count = 0;
+    create->has_autoincrement = 0;
 
     do {
         TokenType next = peek(p)->type;

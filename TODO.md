@@ -41,10 +41,12 @@ Done:
       describes under "Transactions"
 - [x] `SELECT ... FOR UPDATE`, accepted as `GRAMMAR.md` describes under
       "FOR UPDATE"
+- [x] IDs: `AUTOINCREMENT`, and `INSERT ... RETURNING` to get the new
+      ID back, as `GRAMMAR.md` describes under "IDs" and "RETURNING"
+      (file format version 6)
 
 Next, roughly in order, towards a toy online shop (see "Goal" below):
 
-- [ ] IDs: `AUTOINCREMENT`, with a way to get the new ID back
 - [ ] `CREATE INDEX` on columns that aren't a key, ordered (a B-tree),
       so `orders (item_id, expires_at)` serves `item_id = ? AND
       expires_at > ?`; a hash index finds only equal values

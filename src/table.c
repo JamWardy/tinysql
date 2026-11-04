@@ -290,6 +290,34 @@ int table_find_key(const Table *table, const Constraint *constraint,
                       row_has_key, &search, row);
 }
 
+int table_autoincrement_column(const Table *table, size_t *column) {
+    if (!table->autoincrement) {
+        return 0;
+    }
+
+    for (size_t i = 0; i < table->constraint_count; i++) {
+        const Constraint *constraint = &table->constraints[i];
+
+        if (constraint->kind == CONSTRAINT_PRIMARY_KEY) {
+            *column = constraint->columns.positions[0];
+            return 1;
+        }
+    }
+    return 0;
+}
+
+// Raises the table's last ID to value, if it's written to the ID column
+// and higher, so a later INSERT never chooses it.
+static void note_id(Table *table, size_t column, const Value *value) {
+    size_t id_column;
+
+    if (table_autoincrement_column(table, &id_column) &&
+        column == id_column && value->type == TYPE_INT &&
+        value->as.integer > table->last_id) {
+        table->last_id = value->as.integer;
+    }
+}
+
 int table_append_row(Table *table, const Value *values) {
     // Make room in every index first. A failure partway leaves some
     // indexes bigger than needed, which is harmless.
@@ -339,6 +367,10 @@ int table_append_row(Table *table, const Value *values) {
         }
     }
 
+    for (size_t i = 0; i < table->column_count; i++) {
+        note_id(table, i, &copy[i]);
+    }
+
     Row *row = &table->rows[table->row_count++];
     row->values = copy;
     row->count = table->column_count;
@@ -377,6 +409,7 @@ int table_set_value(Table *table, size_t row, size_t column,
     Value *slot = &table->rows[row].values[column];
     values_free(slot, 1);
     *slot = copy;
+    note_id(table, column, slot);
 
     // Each index has room for every row, as table_append_row reserved
     // it, and this row isn't in any it's being added to, so these can't

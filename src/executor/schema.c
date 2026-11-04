@@ -39,6 +39,34 @@ static int resolve_key(const CreateStatement *create, const KeyDef *key,
     return 1;
 }
 
+// Checks the AUTOINCREMENT column, if there is one, is an INT and the
+// whole PRIMARY KEY. keys are create's keys, resolved.
+static int check_autoincrement(const CreateStatement *create,
+                               const ColumnList *keys,
+                               char *error, size_t error_size) {
+    if (!create->has_autoincrement) {
+        return 1;
+    }
+
+    size_t c = (size_t)create->autoincrement_column;
+    const ColumnDef *column = &create->columns[c];
+
+    if (column->type != TYPE_INT) {
+        return fail(error, error_size,
+                    "AUTOINCREMENT column '%s' must be INT", column->name);
+    }
+
+    for (int k = 0; k < create->key_count; k++) {
+        if (create->keys[k].kind == CONSTRAINT_PRIMARY_KEY &&
+            keys[k].count == 1 && keys[k].positions[0] == c) {
+            return 1;
+        }
+    }
+    return fail(error, error_size,
+                "AUTOINCREMENT column '%s' must be the whole PRIMARY KEY",
+                column->name);
+}
+
 // Returns 1 if a and b hold the same columns, in any order.
 static int same_columns(const ColumnList *a, const ColumnList *b) {
     if (a->count != b->count) {
@@ -105,6 +133,10 @@ int execute_create(Database *db, const Statement *stmt,
         }
     }
 
+    if (!check_autoincrement(create, keys, error, error_size)) {
+        return 0;
+    }
+
     Table *table = database_create_table(db, stmt->table_name,
                                          create->columns,
                                          (size_t)create->column_count);
@@ -119,6 +151,8 @@ int execute_create(Database *db, const Statement *stmt,
             return fail(error, error_size, "out of memory");
         }
     }
+
+    table->autoincrement = create->has_autoincrement;
 
     return 1;
 }

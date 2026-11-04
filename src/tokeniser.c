@@ -65,6 +65,8 @@ const char *token_type_name(TokenType type) {
         case TOKEN_COMMIT:         return "COMMIT";
         case TOKEN_ROLLBACK:       return "ROLLBACK";
         case TOKEN_FOR:            return "FOR";
+        case TOKEN_AUTOINCREMENT:  return "AUTOINCREMENT";
+        case TOKEN_RETURNING:      return "RETURNING";
         case TOKEN_EOF:            return "EOF";
     }
     return "UNKNOWN";
@@ -114,6 +116,8 @@ static const Keyword keywords[] = {
     { "COMMIT", TOKEN_COMMIT },
     { "ROLLBACK", TOKEN_ROLLBACK },
     { "FOR",    TOKEN_FOR },
+    { "AUTOINCREMENT", TOKEN_AUTOINCREMENT },
+    { "RETURNING", TOKEN_RETURNING },
 };
 
 // Compares a word of the given length against an upper-case keyword,

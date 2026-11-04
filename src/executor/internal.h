@@ -74,6 +74,28 @@ int execute_update(Database *db, const Statement *stmt,
                    const ParamList *params, Result *result,
                    char *error, size_t error_size);
 
+// select.c: a SELECT list, which INSERT's RETURNING shares.
+
+// Resolves each of list's items, as expr_resolve does; place names the
+// list in messages, such as "RETURNING".
+int select_resolve_list(ExprContext *ctx, const SelectList *list,
+                        int allowed, const char *place,
+                        char *error, size_t error_size);
+
+// Adds a result column for each of list's resolved items, or each of
+// the table's columns for `*`. An item is headed by its AS name, its
+// column's name if it's only a column, or else its expression rebuilt
+// as text.
+void select_add_columns(const ExprContext *ctx, const SelectList *list,
+                        Result *result);
+
+// Appends a result row with list's items for row, or all of row for
+// `*`. row is NULL for an aggregate SELECT, whose items read only the
+// aggregates already worked out.
+int select_append_row(const ExprContext *ctx, const SelectList *list,
+                      const Row *row, Result *result,
+                      char *error, size_t error_size);
+
 // common.c: lookups and checks most statements need.
 
 // Returns the table called name, or NULL after writing an error.

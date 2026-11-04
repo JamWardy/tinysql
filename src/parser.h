@@ -120,7 +120,25 @@ typedef struct {
 
     KeyDef keys[MAX_KEYS];  // In the order written.
     int key_count;
+
+    // 1 if a column says AUTOINCREMENT, otherwise autoincrement_column
+    // is unused. The executor checks it's an INT PRIMARY KEY.
+    int has_autoincrement;
+    int autoincrement_column;  // Its index in columns.
 } CreateStatement;
+
+// One item in a SELECT list: `price * quantity AS total`.
+typedef struct {
+    int expr;                      // The root node.
+    char alias[MAX_TOKEN_LENGTH];  // From AS, or empty.
+} SelectItem;
+
+// What a SELECT, or an INSERT's RETURNING, gives back: `*`, or items.
+typedef struct {
+    int select_all;  // 1 for `*`, which has no items.
+    SelectItem items[MAX_COLUMNS];
+    int item_count;
+} SelectList;
 
 typedef struct {
     // `INSERT INTO t (a, b)`: the columns the values go in, in order.
@@ -130,18 +148,14 @@ typedef struct {
 
     int values[MAX_COLUMNS];  // Each the root node of an expression.
     int value_count;
+
+    int has_returning;     // 1 if there's a RETURNING, otherwise
+                           // returning is unused.
+    SelectList returning;  // Read from the inserted row.
 } InsertStatement;
 
-// One item in a SELECT list: `price * quantity AS total`.
 typedef struct {
-    int expr;                      // The root node.
-    char alias[MAX_TOKEN_LENGTH];  // From AS, or empty.
-} SelectItem;
-
-typedef struct {
-    int select_all;  // 1 for SELECT *, which has no items.
-    SelectItem items[MAX_COLUMNS];
-    int item_count;
+    SelectList list;
 
     int has_where;   // 1 if there's a WHERE, otherwise where is unused.
     int where;       // The root node of a BOOL expression.

@@ -69,6 +69,15 @@ typedef struct {
     Row *rows;
     size_t row_count;
     size_t row_capacity;
+
+    // 1 if INSERT chooses IDs for the PRIMARY KEY, which is then one INT
+    // column; the executor and loader check that.
+    int autoincrement;
+
+    // The highest ID the key has had, given or chosen, so a deleted
+    // row's ID is never chosen again. 0 before the first, and always 0
+    // without autoincrement.
+    long long last_id;
 } Table;
 
 typedef struct {
@@ -112,6 +121,10 @@ int table_find_column(const Table *table, const char *name, size_t *index);
 int table_add_constraint(Table *table, ConstraintKind kind,
                          const ColumnList *columns);
 
+// If table chooses IDs, sets *column to the position of its PRIMARY
+// KEY's one column and returns 1; otherwise returns 0.
+int table_autoincrement_column(const Table *table, size_t *column);
+
 // Looks for a row with the same key as values. If there is one, sets
 // *row to its position and returns 1; otherwise returns 0, as it always
 // does for a key with a NULL. Uses the constraint's index, so it doesn't
@@ -147,14 +160,16 @@ void values_free(Value *values, size_t count);
 
 // Appends a row with copies of values, which must hold column_count
 // values, each NULL or of its column's type, and no key already in the
-// table; the caller validates first. Adds the row to every index.
+// table; the caller validates first. Adds the row to every index, and
+// raises last_id to an ID above it.
 // Returns 1, or 0 if memory ran out (table is unchanged).
 int table_append_row(Table *table, const Value *values);
 
 // Replaces one value of a row with a copy of value, which must be NULL
 // or of the column's type; the caller validates first. If column is in
-// a key, the row moves to its new key in that index. Keys may clash
-// partway through an UPDATE, so that isn't checked here.
+// a key, the row moves to its new key in that index, and an ID above
+// last_id raises it. Keys may clash partway
+// through an UPDATE, so that isn't checked here.
 // Returns 1, or 0 if memory ran out (the old value is kept).
 int table_set_value(Table *table, size_t row, size_t column,
                     const Value *value);

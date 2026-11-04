@@ -6,6 +6,7 @@
 // insert_stmt = INSERT INTO IDENTIFIER
 //               [ LPAREN IDENTIFIER { COMMA IDENTIFIER } RPAREN ]
 //               VALUES LPAREN expr { COMMA expr } RPAREN
+//               [ RETURNING select_list ]
 int parse_insert(Parser *p, Statement *out) {
     if (!expect(p, TOKEN_INSERT, "INSERT") ||
         !expect(p, TOKEN_INTO, "INTO")) {
@@ -71,6 +72,21 @@ int parse_insert(Parser *p, Statement *out) {
         return fail(p->error, sizeof(p->error),
                     "%d columns were named but %d values were given",
                     insert->column_count, insert->value_count);
+    }
+
+    insert->has_returning = match(p, TOKEN_RETURNING);
+    if (insert->has_returning &&
+        !parse_select_list(p, &insert->returning)) {
+        return 0;
+    }
+
+    const char *options = "RETURNING or ';'";
+
+    if (insert->has_returning) {
+        options = insert->returning.select_all ? "';'" : "',' or ';'";
+    }
+    if (!expect_end(p, options)) {
+        return 0;
     }
 
     out->type = STMT_INSERT;

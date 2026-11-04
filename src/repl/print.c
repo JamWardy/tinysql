@@ -91,8 +91,12 @@ void print_result(const Result *result) {
         case STMT_UPDATE:
             print_changed(result->changed, "updated");
             break;
-        case STMT_CREATE:
         case STMT_INSERT:
+            if (result->column_count > 0) {  // INSERT ... RETURNING
+                print_rows(result);
+            }
+            break;
+        case STMT_CREATE:
         case STMT_DROP:
         case STMT_BEGIN:
         case STMT_COMMIT:

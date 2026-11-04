@@ -77,8 +77,8 @@ static int resolve_limit(const SelectStatement *select,
 static int is_aggregate_select(const Statement *stmt) {
     const SelectStatement *select = &stmt->as.select;
 
-    for (int i = 0; i < select->item_count; i++) {
-        if (expr_has_aggregate(stmt->nodes, select->items[i].expr)) {
+    for (int i = 0; i < select->list.item_count; i++) {
+        if (expr_has_aggregate(stmt->nodes, select->list.items[i].expr)) {
             return 1;
         }
     }
@@ -86,12 +86,21 @@ static int is_aggregate_select(const Statement *stmt) {
            expr_has_aggregate(stmt->nodes, select->order_by);
 }
 
-// Adds a result column for each item; SELECT *'s are the table's
-// columns. An item is headed by its AS name, its column's name if it's
-// only a column, or else its expression rebuilt as text.
-static void add_columns(const ExprContext *ctx, const SelectStatement *select,
+int select_resolve_list(ExprContext *ctx, const SelectList *list,
+                        int allowed, const char *place,
+                        char *error, size_t error_size) {
+    for (int i = 0; i < list->item_count; i++) {
+        if (!expr_resolve(ctx, list->items[i].expr, allowed, place,
+                          error, error_size)) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+void select_add_columns(const ExprContext *ctx, const SelectList *list,
                         Result *result) {
-    if (select->select_all) {
+    if (list->select_all) {
         for (size_t c = 0; c < ctx->table->column_count; c++) {
             const Column *column = &ctx->table->columns[c];
             result_add_column(result, column->name, column->type);
@@ -99,8 +108,8 @@ static void add_columns(const ExprContext *ctx, const SelectStatement *select,
         return;
     }
 
-    for (int i = 0; i < select->item_count; i++) {
-        const SelectItem *item = &select->items[i];
+    for (int i = 0; i < list->item_count; i++) {
+        const SelectItem *item = &list->items[i];
         const ExprNode *node = &ctx->nodes[item->expr];
         DataType type = ctx->types[item->expr];
         char heading[MAX_HEADING];
@@ -116,21 +125,18 @@ static void add_columns(const ExprContext *ctx, const SelectStatement *select,
     }
 }
 
-// Appends a result row with select's items for row, or all of row for
-// SELECT *. row is NULL for an aggregate SELECT, whose items read only
-// the aggregates already worked out.
-static int append_row(const ExprContext *ctx, const SelectStatement *select,
+int select_append_row(const ExprContext *ctx, const SelectList *list,
                       const Row *row, Result *result,
                       char *error, size_t error_size) {
     Value values[MAX_COLUMNS];  // Borrowed from the row or the statement.
     const Value *row_values = values;
 
-    if (select->select_all) {
+    if (list->select_all) {
         row_values = row->values;
     }
 
-    for (int i = 0; i < select->item_count; i++) {
-        if (!expr_evaluate(ctx, select->items[i].expr, row, &values[i],
+    for (int i = 0; i < list->item_count; i++) {
+        if (!expr_evaluate(ctx, list->items[i].expr, row, &values[i],
                            error, error_size)) {
             return 0;
         }
@@ -197,8 +203,8 @@ static int select_rows(const ExprContext *ctx, const SelectStatement *select,
     int ok = 1;
 
     for (size_t r = 0; r < count && ok; r++) {
-        ok = append_row(ctx, select, sorted[r].row, result,
-                        error, error_size);
+        ok = select_append_row(ctx, &select->list, sorted[r].row, result,
+                               error, error_size);
     }
 
     free(sorted);
@@ -211,8 +217,8 @@ static int select_rows(const ExprContext *ctx, const SelectStatement *select,
 static int select_aggregates(ExprContext *ctx, const SelectStatement *select,
                              long long limit, const RowList *rows,
                              Result *result, char *error, size_t error_size) {
-    for (int i = 0; i < select->item_count; i++) {
-        if (!expr_compute_aggregates(ctx, select->items[i].expr, rows,
+    for (int i = 0; i < select->list.item_count; i++) {
+        if (!expr_compute_aggregates(ctx, select->list.items[i].expr, rows,
                                      error, error_size)) {
             return 0;
         }
@@ -221,7 +227,8 @@ static int select_aggregates(ExprContext *ctx, const SelectStatement *select,
     if (select->has_limit && limit == 0) {
         return 1;
     }
-    return append_row(ctx, select, NULL, result, error, error_size);
+    return select_append_row(ctx, &select->list, NULL, result,
+                             error, error_size);
 }
 
 int execute_select(Database *db, const Statement *stmt,
@@ -247,7 +254,7 @@ int execute_select(Database *db, const Statement *stmt,
 
     expr_init(&ctx, stmt, table, params);
 
-    if (aggregate && select->select_all) {
+    if (aggregate && select->list.select_all) {
         return fail(error, error_size,
                     "can't mix columns and aggregates (there's no GROUP BY)");
     }
@@ -258,11 +265,9 @@ int execute_select(Database *db, const Statement *stmt,
                     "FOR UPDATE is not allowed with aggregates");
     }
 
-    for (int i = 0; i < select->item_count; i++) {
-        if (!expr_resolve(&ctx, select->items[i].expr, allowed, "SELECT",
-                          error, error_size)) {
-            return 0;
-        }
+    if (!select_resolve_list(&ctx, &select->list, allowed, "SELECT",
+                             error, error_size)) {
+        return 0;
     }
 
     if (!where_resolve(&ctx, select->has_where, select->where,
@@ -280,7 +285,7 @@ int execute_select(Database *db, const Statement *stmt,
         return 0;
     }
 
-    add_columns(&ctx, select, result);
+    select_add_columns(&ctx, &select->list, result);
 
     int ok = aggregate
                  ? select_aggregates(&ctx, select, limit, &matched, result,

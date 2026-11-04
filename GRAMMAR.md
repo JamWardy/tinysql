@@ -27,13 +27,14 @@ table_element = column_def | table_key
 
 column_def    = IDENTIFIER column_type { column_constraint }
 column_type   = INT | TEXT
-column_constraint = NOT NULL | PRIMARY KEY | UNIQUE
+column_constraint = NOT NULL | PRIMARY KEY | UNIQUE | AUTOINCREMENT
 table_key     = ( PRIMARY KEY | UNIQUE )
                 LPAREN IDENTIFIER { COMMA IDENTIFIER } RPAREN
 
 insert_stmt   = INSERT INTO IDENTIFIER
                 [ LPAREN IDENTIFIER { COMMA IDENTIFIER } RPAREN ]
                 VALUES LPAREN expr { COMMA expr } RPAREN
+                [ RETURNING select_list ]
 
 select_stmt   = SELECT select_list FROM IDENTIFIER [ WHERE expr ]
                 [ ORDER BY expr [ ASC | DESC ] ]
@@ -162,6 +163,8 @@ depend on what tables exist:
   as there's no `GROUP BY`: `SELECT name, COUNT(*)` is an error
 - a `SELECT ... FOR UPDATE` has no aggregates, as they give no rows
   to lock
+- `RETURNING` names columns of the table, with no aggregates
+- an `AUTOINCREMENT` column is an `INT` and the whole `PRIMARY KEY`
 - column names are unique within a `CREATE TABLE`
 - each `PRIMARY KEY` and `UNIQUE` column is one of the table's columns,
   named once in that key
@@ -187,9 +190,29 @@ INSERT INTO users VALUES (1, 'Alice', 25);
 INSERT INTO users (name, id) VALUES ('Ann', 5);
 ```
 
-A column left out is `NULL`, so it can't be `NOT NULL`. There must be
-one value per named column, and each column is named at most once.
-`()` with no columns is a syntax error.
+A column left out is `NULL`, so it can't be `NOT NULL`, unless it's
+`AUTOINCREMENT` (see "IDs"). There must be one value per named column,
+and each column is named at most once. `()` with no columns is a
+syntax error.
+
+### RETURNING
+
+`RETURNING` gives back the row the `INSERT` added, as in Postgres, so
+the client learns what TinySQL filled in, such as a new ID. Its list
+is written as a `SELECT` list: `*`, or expressions with `AS`, read from
+the new row. Aggregates aren't allowed.
+
+```sql
+INSERT INTO users (email) VALUES ('a@b.com') RETURNING id;
+INSERT INTO items (title, price) VALUES ('Mug', 800) RETURNING *;
+INSERT INTO items (title, price) VALUES ('Mug', 800)
+RETURNING id, price * 2 AS double;
+```
+
+The result is one row, as a `SELECT`'s would be. It's worked out
+before the row goes in, so if it fails, say on an overflow, nothing is
+inserted. `RETURNING` is only for `INSERT`, and `AS` is needed for a
+heading other than the column's name or the expression.
 
 ## Expressions
 
@@ -435,6 +458,9 @@ can be in a transaction, `CREATE TABLE` and `DROP TABLE` included.
 `BEGIN`, `COMMIT` and `ROLLBACK` are keywords, so they can't be used as
 table or column names. `BEGIN TRANSACTION` and `END` aren't accepted.
 
+An ID chosen by an `INSERT` that's rolled back is chosen again, as the
+table's highest ID rolls back with everything else (see "IDs").
+
 ### FOR UPDATE
 
 `FOR UPDATE`, at the end of a `SELECT`, locks the rows it returns until
@@ -524,3 +550,35 @@ SELECT * FROM users WHERE id = 5 OR id = 6;    -- OR: reads every row
 
 The same goes for `UPDATE` and `DELETE`. `PRIMARY`, `KEY` and `UNIQUE`
 are keywords, so they can't be used as table or column names.
+
+### IDs
+
+`AUTOINCREMENT` on a table's primary key makes TinySQL choose each new
+row's ID, as in SQLite. The key must be one `INT` column, so a table
+has at most one:
+
+```sql
+CREATE TABLE orders (id INT PRIMARY KEY AUTOINCREMENT, item_id INT);
+INSERT INTO orders (item_id) VALUES (5) RETURNING id;   -- 1
+INSERT INTO orders VALUES (NULL, 6) RETURNING id;       -- 2
+INSERT INTO orders VALUES (10, 7);                      -- 10, given
+INSERT INTO orders (item_id) VALUES (8) RETURNING id;   -- 11
+```
+
+- An `INSERT` that leaves the ID out, or gives `NULL`, gets one more
+  than the highest the table has had. The first is 1.
+- An `INSERT` or `UPDATE` may give its own ID, as seed data does. It's
+  used if no other row has it, and if it's higher than any so far,
+  chosen IDs carry on after it.
+- A deleted row's ID is never chosen again, as each table keeps the
+  highest ID it has had, rather than working out `MAX(id) + 1`. So an
+  ID can stand for its row elsewhere, such as an order's at the
+  payment provider.
+- `ROLLBACK` takes back the IDs its `INSERT`s chose, so they're chosen
+  again; only IDs of committed rows are never reused.
+- Once the table has had the highest `INT`, an `INSERT` that leaves the
+  ID out fails: `table 'orders' has run out of IDs`.
+
+`.schema` shows it as `id INT PRIMARY KEY AUTOINCREMENT`, however the
+key was written. `AUTOINCREMENT` and `RETURNING` are keywords, so they
+can't be used as table or column names.

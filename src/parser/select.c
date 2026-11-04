@@ -8,7 +8,7 @@
 
 // select_list = STAR | select_item { COMMA select_item }
 // select_item = expr [ AS IDENTIFIER ]
-static int parse_select_list(Parser *p, SelectStatement *out) {
+int parse_select_list(Parser *p, SelectList *out) {
     out->item_count = 0;
     out->select_all = match(p, TOKEN_STAR);
 
@@ -120,12 +120,13 @@ int parse_select(Parser *p, Statement *out) {
     SelectStatement *select = &out->as.select;
 
     if (!expect(p, TOKEN_SELECT, "SELECT") ||
-        !parse_select_list(p, select)) {
+        !parse_select_list(p, &select->list)) {
         return 0;
     }
 
     // After a column name, a comma would also have been valid.
-    if (!expect(p, TOKEN_FROM, select->select_all ? "FROM" : "',' or FROM")) {
+    if (!expect(p, TOKEN_FROM,
+                select->list.select_all ? "FROM" : "',' or FROM")) {
         return 0;
     }
 

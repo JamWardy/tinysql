@@ -172,7 +172,7 @@ message. Used in `index.c`, `parser/`, `persist.c`, `table.c` and
 |---|---|---|
 | `size_t` | `<stddef.h>` | An unsigned integer for sizes and counts. It's what `sizeof` and `strlen` give |
 | `NULL` | `<stddef.h>` | The "points nowhere" pointer. Nothing to do with SQL's `NULL`, which a `Value` stores as `TYPE_NULL` |
-| `LLONG_MAX`, `LLONG_MIN` | `<limits.h>` | The largest and smallest `long long`. Arithmetic and `SUM` check against them first, and the loader uses `LLONG_MAX` to turn stored integers back into signed ones |
+| `LLONG_MAX`, `LLONG_MIN` | `<limits.h>` | The largest and smallest `long long`. Arithmetic and `SUM` check against them first, the loader uses `LLONG_MAX` to turn stored integers back into signed ones, and `INSERT` stops choosing IDs at `LLONG_MAX` |
 | `uint64_t` | `<stdint.h>` | An unsigned integer of exactly 64 bits, for the file format and index hashes |
 | `UINT32_MAX` | `<stdint.h>` | The largest 32-bit unsigned value, the most a string length in the file can be |
 | `UINT8_MAX` | `<stdint.h>` | The largest 8-bit unsigned value, the most constraints a table's count byte in the file can hold |
