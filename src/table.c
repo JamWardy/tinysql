@@ -64,6 +64,8 @@ void database_init(Database *db) {
     db->tables = NULL;
     db->count = 0;
     db->capacity = 0;
+    db->in_transaction = 0;
+    db->unsaved = 0;
 }
 
 void database_free(Database *db) {

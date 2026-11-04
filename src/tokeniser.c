@@ -61,6 +61,9 @@ const char *token_type_name(TokenType type) {
         case TOKEN_TRUE:           return "TRUE";
         case TOKEN_FALSE:          return "FALSE";
         case TOKEN_AS:             return "AS";
+        case TOKEN_BEGIN:          return "BEGIN";
+        case TOKEN_COMMIT:         return "COMMIT";
+        case TOKEN_ROLLBACK:       return "ROLLBACK";
         case TOKEN_EOF:            return "EOF";
     }
     return "UNKNOWN";
@@ -106,6 +109,9 @@ static const Keyword keywords[] = {
     { "TRUE",   TOKEN_TRUE },
     { "FALSE",  TOKEN_FALSE },
     { "AS",     TOKEN_AS },
+    { "BEGIN",  TOKEN_BEGIN },
+    { "COMMIT", TOKEN_COMMIT },
+    { "ROLLBACK", TOKEN_ROLLBACK },
 };
 
 // Compares a word of the given length against an upper-case keyword,

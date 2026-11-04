@@ -180,7 +180,10 @@ typedef enum {
     STMT_SELECT,
     STMT_DELETE,
     STMT_UPDATE,
-    STMT_DROP        // Needs only table_name.
+    STMT_DROP,       // Needs only table_name.
+    STMT_BEGIN,      // These three need nothing more.
+    STMT_COMMIT,
+    STMT_ROLLBACK
 } StatementType;
 
 // What the parser produces and the executor consumes.

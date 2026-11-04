@@ -94,6 +94,9 @@ void print_result(const Result *result) {
         case STMT_CREATE:
         case STMT_INSERT:
         case STMT_DROP:
+        case STMT_BEGIN:
+        case STMT_COMMIT:
+        case STMT_ROLLBACK:
             break;
     }
 }

@@ -60,6 +60,9 @@ typedef enum {
     TOKEN_TRUE,
     TOKEN_FALSE,
     TOKEN_AS,
+    TOKEN_BEGIN,
+    TOKEN_COMMIT,
+    TOKEN_ROLLBACK,
     TOKEN_EOF
 } TokenType;
 

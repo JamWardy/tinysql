@@ -37,8 +37,9 @@
 
 // Runs one SQL statement, such as "SELECT * FROM users;", against db and
 // fills result, which must be empty, as result_init and result_free
-// leave it. After a change, db is saved to path, unless path is NULL.
-// The caller frees result with result_free.
+// leave it. After a change, db is saved to path, unless path is NULL or
+// a transaction is open; BEGIN, COMMIT and ROLLBACK work as GRAMMAR.md
+// describes. The caller frees result with result_free.
 //
 // params holds param_count values, one for each `?` in sql, in order;
 // it may be NULL when param_count is 0. Each is INT, TEXT (with its
@@ -47,8 +48,8 @@
 //
 // On success returns 1. On failure writes a message to error, leaves
 // result empty and returns 0. Usually db is then unchanged, but if only
-// saving failed the change stays in memory, and is saved with the next
-// change that saves successfully.
+// saving failed the change stays in memory, and is saved by the next
+// save that works, such as the next change's or BEGIN's.
 int tinysql_run(Database *db, const char *path, const char *sql,
                 const Value *params, size_t param_count,
                 Result *result, char *error, size_t error_size);

@@ -75,11 +75,15 @@ typedef struct {
     Table *tables;
     size_t count;
     size_t capacity;
+
+    int in_transaction;  // 1 between BEGIN and COMMIT or ROLLBACK.
+    int unsaved;         // 1 if a change failed to save to the file.
 } Database;
 
+// Leaves db empty, with no transaction open and nothing unsaved.
 void database_init(Database *db);
 
-// Frees every table and leaves db empty, ready to reuse.
+// Frees every table and leaves db as database_init does, ready to reuse.
 void database_free(Database *db);
 
 // Returns the table with exactly this name, or NULL.

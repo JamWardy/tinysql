@@ -40,6 +40,9 @@ int parse_update(Parser *p, Statement *out);
 // delete.c
 int parse_delete(Parser *p, Statement *out);
 
+// transaction.c: BEGIN, COMMIT and ROLLBACK.
+int parse_transaction(Parser *p, Statement *out);
+
 // common.c: reading tokens and values.
 
 // Returns the current token without consuming it.

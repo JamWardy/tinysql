@@ -18,7 +18,8 @@ token types produced by the tokeniser in `src/tokeniser.h`.
 
 ```
 statement     = ( create_stmt | insert_stmt | select_stmt | delete_stmt
-                | update_stmt | drop_stmt ) SEMICOLON EOF
+                | update_stmt | drop_stmt | transaction_stmt )
+                SEMICOLON EOF
 
 create_stmt   = CREATE TABLE IDENTIFIER
                 LPAREN table_element { COMMA table_element } RPAREN
@@ -47,6 +48,8 @@ update_stmt   = UPDATE IDENTIFIER
 assignment    = IDENTIFIER EQUAL expr
 
 drop_stmt     = DROP TABLE IDENTIFIER
+
+transaction_stmt = BEGIN | COMMIT | ROLLBACK
 
 expr          = and_expr { OR and_expr }
 and_expr      = not_expr { AND not_expr }
@@ -393,6 +396,42 @@ the start of a statement.
 | `.schema`        | prints the `CREATE TABLE` statement for each table |
 | `.schema users`  | prints it for one table                            |
 | `.exit`          | quits                                              |
+
+## Transactions
+
+`BEGIN` starts a transaction: the statements after it take effect
+together at `COMMIT`, or not at all if it ends with `ROLLBACK`.
+
+```sql
+BEGIN;
+UPDATE items SET stock = stock - 1 WHERE id = 5;
+INSERT INTO orders VALUES (12, 5, 1);
+COMMIT;      -- both saved, or ROLLBACK; for neither
+```
+
+Outside a transaction, each change is saved to the file as soon as it
+succeeds. Inside one, changes are seen by the statements that follow
+but stay in memory: `COMMIT` saves them, and `ROLLBACK` throws them
+away by loading the file again, which still holds the database as it
+was at `BEGIN`. Quitting without `COMMIT` saves nothing. Any statement
+can be in a transaction, `CREATE TABLE` and `DROP TABLE` included.
+
+- **A transaction needs a database file.** Without one there's nothing
+  for `ROLLBACK` to load, so `BEGIN` fails.
+- **A statement that fails ends nothing.** It changes nothing, as
+  always, and the transaction carries on, as in SQLite. Whether to
+  `ROLLBACK` is up to whoever sent it.
+- **`BEGIN` in a transaction, or `COMMIT` or `ROLLBACK` outside one,
+  does nothing,** and isn't an error.
+- **If `COMMIT` can't save**, it fails and the transaction stays open,
+  so it can be retried or rolled back. Likewise if `ROLLBACK` can't
+  load the file.
+- **If a change outside a transaction failed to save**, the next
+  `BEGIN` saves it first, and fails if it still can't, as a `ROLLBACK`
+  would otherwise lose it.
+
+`BEGIN`, `COMMIT` and `ROLLBACK` are keywords, so they can't be used as
+table or column names. `BEGIN TRANSACTION` and `END` aren't accepted.
 
 ## Keys
 

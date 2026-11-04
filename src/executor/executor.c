@@ -26,6 +26,10 @@ static int execute_statement(Database *db, const Statement *stmt,
                                   error, error_size);
         case STMT_DROP:
             return execute_drop(db, stmt, error, error_size);
+        case STMT_BEGIN:
+        case STMT_COMMIT:
+        case STMT_ROLLBACK:
+            return 1;  // tinysql_run does these, as they need the file.
     }
 
     return fail(error, error_size, "unknown statement type");

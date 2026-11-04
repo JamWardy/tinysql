@@ -4,6 +4,32 @@
 #include "executor.h"
 #include "parser.h"
 #include "tokeniser.h"
+#include "transaction.h"
+
+// Does what a statement needs from the file once it has run: BEGIN,
+// COMMIT and ROLLBACK do their work here, as the executor never sees
+// the file, and any other change is autocommitted.
+static int update_file(Database *db, const char *path, StatementType type,
+                       char *error, size_t error_size) {
+    switch (type) {
+        case STMT_BEGIN:
+            return transaction_begin(db, path, error, error_size);
+        case STMT_COMMIT:
+            return transaction_commit(db, path, error, error_size);
+        case STMT_ROLLBACK:
+            return transaction_rollback(db, path, error, error_size);
+        case STMT_SELECT:
+            return 1;
+        case STMT_CREATE:
+        case STMT_INSERT:
+        case STMT_DELETE:
+        case STMT_UPDATE:
+        case STMT_DROP:
+            return transaction_autocommit(db, path, error, error_size);
+    }
+
+    return fail(error, error_size, "unknown statement type");
+}
 
 int tinysql_run(Database *db, const char *path, const char *sql,
                 const Value *params, size_t param_count,
@@ -18,16 +44,9 @@ int tinysql_run(Database *db, const char *path, const char *sql,
         return 0;
     }
 
-    // Rewrite the file after every change, so stopping the program at
-    // any point loses nothing that succeeded.
-    if (path && stmt.type != STMT_SELECT) {
-        char reason[TINYSQL_MAX_ERROR];
-
-        if (!database_save(db, path, reason, sizeof(reason))) {
-            result_free(result);
-            return fail(error, error_size,
-                        "change kept in memory but not saved: %s", reason);
-        }
+    if (!update_file(db, path, stmt.type, error, error_size)) {
+        result_free(result);
+        return 0;
     }
 
     return 1;

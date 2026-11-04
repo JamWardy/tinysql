@@ -37,10 +37,11 @@ Done:
       such as `SET stock = stock - ?`: one tree per statement for
       `SET`, `VALUES`, `WHERE`, the `SELECT` list (with `AS`) and
       `ORDER BY`, with `BOOL`, `TRUE` and `FALSE`
+- [x] Transactions: `BEGIN`, `COMMIT` and `ROLLBACK`, as `GRAMMAR.md`
+      describes under "Transactions"
 
 Next, roughly in order, towards a toy online shop (see "Goal" below):
 
-- [ ] Transactions: `BEGIN`, `COMMIT` and `ROLLBACK`
 - [ ] `SELECT ... FOR UPDATE`, to lock the item row. Accepted and
       needs nothing more, as the server runs one transaction at a time
 - [ ] IDs: `AUTOINCREMENT`, with a way to get the new ID back
