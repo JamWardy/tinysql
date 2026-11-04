@@ -37,7 +37,7 @@ insert_stmt   = INSERT INTO IDENTIFIER
 
 select_stmt   = SELECT select_list FROM IDENTIFIER [ WHERE expr ]
                 [ ORDER BY expr [ ASC | DESC ] ]
-                [ LIMIT ( NUMBER | PARAM ) ]
+                [ LIMIT ( NUMBER | PARAM ) ] [ FOR UPDATE ]
 select_list   = STAR | select_item { COMMA select_item }
 select_item   = expr [ AS IDENTIFIER ]
 
@@ -160,6 +160,8 @@ depend on what tables exist:
   in `WHERE`, `SET` or `VALUES`, nor inside another aggregate
 - a `SELECT` with an aggregate reads columns only inside aggregates,
   as there's no `GROUP BY`: `SELECT name, COUNT(*)` is an error
+- a `SELECT ... FOR UPDATE` has no aggregates, as they give no rows
+  to lock
 - column names are unique within a `CREATE TABLE`
 - each `PRIMARY KEY` and `UNIQUE` column is one of the table's columns,
   named once in that key
@@ -432,6 +434,31 @@ can be in a transaction, `CREATE TABLE` and `DROP TABLE` included.
 
 `BEGIN`, `COMMIT` and `ROLLBACK` are keywords, so they can't be used as
 table or column names. `BEGIN TRANSACTION` and `END` aren't accepted.
+
+### FOR UPDATE
+
+`FOR UPDATE`, at the end of a `SELECT`, locks the rows it returns until
+the transaction ends, so another transaction can't change them in
+between:
+
+```sql
+BEGIN;
+SELECT stock FROM items WHERE id = ? FOR UPDATE;
+UPDATE items SET stock = stock - 1 WHERE id = ?;
+COMMIT;
+```
+
+TinySQL runs one transaction at a time, so every row is already safe
+until `COMMIT` or `ROLLBACK`, and `FOR UPDATE` changes nothing yet. It's
+accepted so queries written for row locks run unchanged, and so it's
+there when real row locks come.
+
+- It's allowed outside `BEGIN`, as in Postgres, where the lock lasts
+  only for that statement.
+- It can't be used with aggregates, which give no rows to lock.
+- It comes last, after `LIMIT`. `FOR SHARE`, `NOWAIT` and `SKIP LOCKED`
+  aren't accepted.
+- `FOR` is a keyword, so it can't be used as a table or column name.
 
 ## Keys
 

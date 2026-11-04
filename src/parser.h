@@ -153,6 +153,10 @@ typedef struct {
 
     int has_limit;   // 1 if there's a LIMIT, otherwise every row.
     Literal limit;   // An INT, never negative, or a `?`.
+
+    // 1 for FOR UPDATE, which locks nothing more yet: TinySQL runs one
+    // transaction at a time.
+    int for_update;
 } SelectStatement;
 
 typedef struct {

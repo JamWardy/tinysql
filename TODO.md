@@ -39,11 +39,11 @@ Done:
       `ORDER BY`, with `BOOL`, `TRUE` and `FALSE`
 - [x] Transactions: `BEGIN`, `COMMIT` and `ROLLBACK`, as `GRAMMAR.md`
       describes under "Transactions"
+- [x] `SELECT ... FOR UPDATE`, accepted as `GRAMMAR.md` describes under
+      "FOR UPDATE"
 
 Next, roughly in order, towards a toy online shop (see "Goal" below):
 
-- [ ] `SELECT ... FOR UPDATE`, to lock the item row. Accepted and
-      needs nothing more, as the server runs one transaction at a time
 - [ ] IDs: `AUTOINCREMENT`, with a way to get the new ID back
 - [ ] `CREATE INDEX` on columns that aren't a key, ordered (a B-tree),
       so `orders (item_id, expires_at)` serves `item_id = ? AND

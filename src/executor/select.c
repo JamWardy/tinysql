@@ -252,6 +252,12 @@ int execute_select(Database *db, const Statement *stmt,
                     "can't mix columns and aggregates (there's no GROUP BY)");
     }
 
+    // An aggregate gives no table rows to lock.
+    if (aggregate && select->for_update) {
+        return fail(error, error_size,
+                    "FOR UPDATE is not allowed with aggregates");
+    }
+
     for (int i = 0; i < select->item_count; i++) {
         if (!expr_resolve(&ctx, select->items[i].expr, allowed, "SELECT",
                           error, error_size)) {

@@ -63,6 +63,7 @@ typedef enum {
     TOKEN_BEGIN,
     TOKEN_COMMIT,
     TOKEN_ROLLBACK,
+    TOKEN_FOR,
     TOKEN_EOF
 } TokenType;
 

@@ -106,9 +106,16 @@ static int parse_limit(Parser *p, SelectStatement *select) {
     return 1;
 }
 
+// [ FOR UPDATE ]
+static int parse_for_update(Parser *p, SelectStatement *select) {
+    select->for_update = match(p, TOKEN_FOR);
+
+    return !select->for_update || expect(p, TOKEN_UPDATE, "UPDATE");
+}
+
 // select_stmt = SELECT select_list FROM IDENTIFIER [ WHERE expr ]
 //               [ ORDER BY expr [ ASC | DESC ] ]
-//               [ LIMIT ( NUMBER | PARAM ) ]
+//               [ LIMIT ( NUMBER | PARAM ) ] [ FOR UPDATE ]
 int parse_select(Parser *p, Statement *out) {
     SelectStatement *select = &out->as.select;
 
@@ -131,7 +138,8 @@ int parse_select(Parser *p, Statement *out) {
 
     if (!parse_where(p, &select->has_where, &select->where) ||
         !parse_order_by(p, select, &explicit_direction) ||
-        !parse_limit(p, select)) {
+        !parse_limit(p, select) ||
+        !parse_for_update(p, select)) {
         return 0;
     }
 
@@ -139,15 +147,17 @@ int parse_select(Parser *p, Statement *out) {
     // clause written.
     const char *options;
 
-    if (select->has_limit) {
+    if (select->for_update) {
         options = "';'";
+    } else if (select->has_limit) {
+        options = "FOR UPDATE or ';'";
     } else if (select->has_order) {
-        options = explicit_direction ? "LIMIT or ';'"
-                                     : "ASC, DESC, LIMIT or ';'";
+        options = explicit_direction ? "LIMIT, FOR UPDATE or ';'"
+                                     : "ASC, DESC, LIMIT, FOR UPDATE or ';'";
     } else if (select->has_where) {
-        options = "AND, OR, ORDER BY, LIMIT or ';'";
+        options = "AND, OR, ORDER BY, LIMIT, FOR UPDATE or ';'";
     } else {
-        options = "WHERE, ORDER BY, LIMIT or ';'";
+        options = "WHERE, ORDER BY, LIMIT, FOR UPDATE or ';'";
     }
 
     if (!expect_end(p, options)) {
