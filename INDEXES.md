@@ -1,8 +1,8 @@
 # Hash indexes and B-trees
 
 TinySQL has both kinds of index. Each `PRIMARY KEY` and `UNIQUE` key has
-a hash index (`src/index.c`), and `CREATE INDEX` makes a B+ tree
-(`src/btree.c`), the kind SQLite, PostgreSQL and MySQL use by default.
+a hash index (`src/storage/index.c`), and `CREATE INDEX` makes a B+ tree
+(`src/storage/btree.c`), the kind SQLite, PostgreSQL and MySQL use by default.
 This note says how the two differ, why each is used where it is, and how
 the B+ tree works.
 

@@ -4,7 +4,7 @@
 #include <stddef.h>
 
 #include "parser.h"  // For DataType, StatementType and MAX_COLUMNS.
-#include "table.h"   // For Value.
+#include "storage/table.h"   // For Value.
 
 // Room for a heading such as "COUNT(name)" or "price * quantity"; longer ones
 // are cut short.

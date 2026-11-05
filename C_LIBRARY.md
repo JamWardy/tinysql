@@ -15,10 +15,10 @@ helper. Prefer these to the raw calls.
 | `fail` | `src/error.h` | `vsnprintf` | Write an error message and return 0 in one line |
 | `copy_text` | `src/text.h` | `strlen`, `memcpy` | Copy a string into a fixed-size array |
 | `copy_slice` | `src/text.h` | `memcpy` | Copy part of a string, e.g. one word, into a fixed-size array |
-| `copy_string` | `src/table.c` | `malloc`, `memcpy` | Copy a string onto the heap (C11 has no `strdup`) |
-| `read_fail` | `src/persist.c` | `vsnprintf` | `fail` for the loader, which keeps its error buffer in a `Reader` |
-| `make_temp_path` | `src/persist.c` | `malloc`, `memcpy` | Build `path` + `".tmp"` for saving |
-| `discard_temp` | `src/persist.c` | `remove`, `free` | Clean up after a failed save |
+| `copy_string` | `src/text.c` | `malloc`, `memcpy` | Copy a string onto the heap (C11 has no `strdup`) |
+| `read_fail` | `src/storage/persist.c` | `vsnprintf` | `fail` for the loader, which keeps its error buffer in a `Reader` |
+| `make_temp_path` | `src/storage/persist.c` | `malloc`, `memcpy` | Build `path` + `".tmp"` for saving |
+| `discard_temp` | `src/storage/persist.c` | `remove`, `free` | Clean up after a failed save |
 
 ## Patterns that make the calls look strange
 

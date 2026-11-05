@@ -1,7 +1,7 @@
 #ifndef TINYSQL_REPL_COMMANDS_H
 #define TINYSQL_REPL_COMMANDS_H
 
-#include "table.h"
+#include "storage/table.h"
 
 // Returns 0 for .exit. Commands aren't SQL: they skip the tokeniser and parser,
 // and never change the database.

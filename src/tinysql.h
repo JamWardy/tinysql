@@ -27,9 +27,9 @@
 
 #include <stddef.h>
 
-#include "persist.h"  // For database_load.
+#include "storage/persist.h"  // For database_load.
 #include "result.h"
-#include "table.h"    // For Database, database_init and database_free.
+#include "storage/table.h"    // For Database, database_init and database_free.
 
 // Big enough for any message TinySQL writes.
 #define TINYSQL_MAX_ERROR 256

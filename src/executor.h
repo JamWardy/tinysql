@@ -5,7 +5,7 @@
 
 #include "parser.h"
 #include "result.h"
-#include "table.h"
+#include "storage/table.h"
 
 // One per `?`, in order. Text is read, never kept.
 typedef struct {

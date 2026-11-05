@@ -5,10 +5,12 @@ CFLAGS = -std=c11 -Wall -Wextra -Wpedantic -g -Isrc
 
 # The database itself, which other programs link in as libtinysql.a
 # and use through src/tinysql.h.
-LIB_SRCS = src/tinysql.c src/tokeniser.c src/table.c src/index.c \
-           src/result.c src/persist.c src/transaction.c src/error.c src/text.c \
-           src/value.c src/btree.c src/like.c \
-           $(PARSER_SRCS) $(EXECUTOR_SRCS)
+LIB_SRCS = src/tinysql.c src/tokeniser.c src/result.c src/error.c \
+           src/text.c src/value.c src/like.c \
+           $(STORAGE_SRCS) $(PARSER_SRCS) $(EXECUTOR_SRCS)
+# Tables in memory, their indexes, and the file they're saved to.
+STORAGE_SRCS = src/storage/table.c src/storage/index.c src/storage/btree.c \
+               src/storage/persist.c src/storage/transaction.c
 # The parser, one file per statement plus what they share.
 PARSER_SRCS = src/parser/parser.c src/parser/common.c \
               src/parser/expr.c src/parser/deparse.c \

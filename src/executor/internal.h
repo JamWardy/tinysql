@@ -10,7 +10,7 @@
 #include "like.h"
 #include "parser.h"
 #include "result.h"
-#include "table.h"
+#include "storage/table.h"
 
 // Pointers into the table, valid only until it next changes. Whoever fills one
 // frees rows.

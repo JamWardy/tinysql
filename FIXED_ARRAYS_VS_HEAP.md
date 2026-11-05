@@ -23,7 +23,7 @@ Their text sits in fixed-size arrays inside structs: `Token.text`,
 `Statement.table_name`, `ColumnDef.name`, `Literal.as.text` and so on,
 each `MAX_TOKEN_LENGTH` (128) bytes. Those structs live in static memory,
 because `tinysql_run` declares them as `static TokenList tokens` and
-`static Statement stmt`. Storage (`src/table.c`) uses the heap instead.
+`static Statement stmt`. Storage (`src/storage/table.c`) uses the heap instead.
 
 ## Comparison
 
