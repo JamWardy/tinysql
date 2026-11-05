@@ -92,6 +92,14 @@ reasoning. In short:
   nothing returns 1 or 0 and writes what it found through a pointer, as
   `table_lookup_column` does. A `NULL` pointer is fine
   for an optional pointer, such as `where_resolve`'s filter.
+- **Make bad states impossible to write down.** Fields that only make
+  sense together are one enum, or one struct, not parallel flags: a
+  plan's `PlanOrdering` is `ORDERING_NONE`, `ORDERING_FORWARDS` or
+  `ORDERING_BACKWARDS`, where two flags, `in_order` and `backwards`,
+  would also allow "backwards but not in order". When adding a field,
+  ask whether some mix of it and its neighbours means nothing; if so,
+  combine them. A value used only by one case says so, as
+  `RowOrder.column` is `ORDER_BY_COLUMN`'s.
 - **No `default:` in a switch over our own enums.** List every case, so
   the compiler warns about each switch that needs updating when a value
   is added, as happened when `TYPE_NULL` was added. Switches over token
