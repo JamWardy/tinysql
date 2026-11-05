@@ -31,14 +31,22 @@ EXECUTOR_SRCS = src/executor/executor.c src/executor/common.c \
 # commands.
 APP_SRCS = src/repl/main.c src/repl/input.c src/repl/print.c \
            src/repl/commands.c
+# The server: its loop, and the messages it swaps with clients.
+SERVER_SRCS = src/server/main.c src/server/server.c src/server/protocol.c
 
 # Objects and .d files go in build/, mirroring src/.
 LIB_OBJS = $(LIB_SRCS:src/%.c=build/%.o)
 APP_OBJS = $(APP_SRCS:src/%.c=build/%.o)
-DEPS = $(LIB_OBJS:.o=.d) $(APP_OBJS:.o=.d)
+SERVER_OBJS = $(SERVER_SRCS:src/%.c=build/%.o)
+DEPS = $(LIB_OBJS:.o=.d) $(APP_OBJS:.o=.d) $(SERVER_OBJS:.o=.d)
+
+all: tinysql tinysql-server
 
 tinysql: $(APP_OBJS) libtinysql.a
 	$(CC) $(APP_OBJS) libtinysql.a -o $@
+
+tinysql-server: $(SERVER_OBJS) libtinysql.a
+	$(CC) $(SERVER_OBJS) libtinysql.a -o $@
 
 # ar bundles the objects into one archive; r adds or replaces them, c
 # creates the archive without a warning, and s writes an index of its
@@ -54,8 +62,8 @@ build/%.o: src/%.c
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
 clean:
-	rm -rf tinysql libtinysql.a build
+	rm -rf tinysql tinysql-server libtinysql.a build
 
 -include $(DEPS)
 
-.PHONY: clean
+.PHONY: all clean

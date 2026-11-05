@@ -1,5 +1,6 @@
 # Build outputs
 /tinysql
+/tinysql-server
 /libtinysql.a
 /build/
 *.dSYM/
