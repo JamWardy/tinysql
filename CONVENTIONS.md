@@ -193,9 +193,6 @@ reasoning. In short:
   `-Wall -Wextra -Wpedantic`; treat each warning as a bug.
 - **Try it by hand**, including the error cases: a missing table, a
   wrong type, input cut short. There's no test suite, by choice.
-- **For memory changes**, also run with `-fsanitize=address,undefined`,
-  or where AddressSanitizer doesn't run, UBSan plus
-  `MallocScribble=1 MallocErrorAbort=1` on macOS.
 - **Keep the docs in step:** `GRAMMAR.md` for a change to the SQL
   accepted, `DESIGN.md` for a change to what it does, `TODO.md` when
   something is done, `C_LIBRARY.md` for new library functions.
