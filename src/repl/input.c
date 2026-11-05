@@ -54,13 +54,12 @@ static void scan_text(Scan *scan, const char *text) {
     }
 }
 
-// Returns 1 if what's been scanned ends the statement: its last
-// character outside strings and comments is ';'.
+// Whether the last character outside strings and comments is ';'.
 static int scan_ended(const Scan *scan) {
     return scan->ends && !scan->dash;
 }
 
-// Reads and discards the rest of the current input line, scanning it.
+// Discards the rest of the line, still scanning it.
 static void skip_line(Scan *scan) {
     int c;
 
@@ -83,9 +82,8 @@ static int is_command(const char *line) {
     return *skip_spaces(line) == '.';
 }
 
-// Copies the command in line to command (size bytes), leaving out the
-// spaces around it and the newline (the last line of a file may have
-// none).
+// Without the spaces around it or the newline, which the file's last line may
+// lack.
 static void copy_command(char *command, size_t size, const char *line) {
     line = skip_spaces(line);
     size_t length = strlen(line);
@@ -104,9 +102,8 @@ static int is_comment(const char *line) {
     return strncmp(skip_spaces(line), "--", 2) == 0;
 }
 
-// Reads one line into line (size bytes) and scans it. A line that
-// doesn't fit is still read and scanned to its end, so the next read
-// starts on the next line.
+// A line that doesn't fit is still read and scanned to its end, so the next
+// read starts on the next line.
 static LineResult read_line(char *line, size_t size, Scan *scan) {
     if (fgets(line, (int)size, stdin) == NULL) {
         return LINE_END;
@@ -124,8 +121,7 @@ static LineResult read_line(char *line, size_t size, Scan *scan) {
     return LINE_OK;
 }
 
-// Adds line to the end of statement, which holds *length characters.
-// Returns 0, changing nothing, if it won't fit in size bytes.
+// Changes nothing if it won't fit in size bytes.
 static int append_line(char *statement, size_t size, size_t *length,
                        const char *line) {
     size_t line_length = strlen(line);

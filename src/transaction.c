@@ -9,7 +9,7 @@ static int fail_no_file(char *error, size_t error_size) {
     return fail(error, error_size, "transactions need a database file");
 }
 
-// Saves db to path, keeping track of whether the file is up to date.
+// Keeps track of whether the file is up to date.
 static int save(Database *db, const char *path,
                 char *error, size_t error_size) {
     if (!database_save(db, path, error, error_size)) {

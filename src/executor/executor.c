@@ -5,7 +5,6 @@
 #include "error.h"
 #include "internal.h"
 
-// Runs stmt, filling result, which execute has checked is empty.
 static int execute_statement(Database *db, const Statement *stmt,
                              const ParamList *params, Result *result,
                              char *error, size_t error_size) {

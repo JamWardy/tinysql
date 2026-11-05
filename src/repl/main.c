@@ -5,7 +5,6 @@
 #include "print.h"
 #include "tinysql.h"
 
-// Runs one statement, printing its result or any error.
 static void run_statement(Database *db, const char *path, const char *sql) {
     char error[TINYSQL_MAX_ERROR];
     Result result;

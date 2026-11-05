@@ -18,7 +18,6 @@ void copy_slice(char *dest, size_t size, const char *start, size_t length) {
     dest[length] = '\0';
 }
 
-// strdup isn't part of C11, so copy strings by hand.
 char *copy_string(const char *s) {
     size_t size = strlen(s) + 1;
     char *copy = malloc(size);

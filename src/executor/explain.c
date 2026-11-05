@@ -4,8 +4,7 @@
 
 #include "error.h"
 
-// Sets *has_where and *where to stmt's WHERE, which only SELECT, UPDATE
-// and DELETE have.
+// Only SELECT, UPDATE and DELETE have one.
 static void find_where(const Statement *stmt, int *has_where, int *where) {
     *has_where = 0;
     *where = -1;
@@ -47,9 +46,8 @@ static void write_range(char *out, size_t size, const ColumnBounds *b) {
     }
 }
 
-// Writes how plan finds rows, e.g. "every row", "PRIMARY KEY (id)" or
-// "index orders_item_expires (item_id =, expires_at >)". Cut short to
-// fit size bytes.
+// e.g. "every row", "PRIMARY KEY (id)" or "index orders_item_expires (item_id
+// =, expires_at >)".
 static void describe(const Table *table, const Plan *plan, char *out,
                      size_t size) {
     const ColumnList *columns;
@@ -94,7 +92,6 @@ static void describe(const Table *table, const Plan *plan, char *out,
     }
 }
 
-// Rounds an estimate to the nearest whole number, for showing.
 static long long whole(double estimate) {
     return (long long)(estimate + 0.5);
 }

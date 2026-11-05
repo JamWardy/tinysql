@@ -57,13 +57,9 @@ static int updated_row_has_key(size_t row, const void *context) {
     return key_equal(search->key, after, search->values);
 }
 
-// Checks that constraint's key would still be unique after the UPDATE,
-// by putting every row's new key in a new index, one by one, and failing
-// at the first that's there already. This reads every row, but only
-// runs when an UPDATE sets a key column, which is rare.
-//
-// Checking only the updated rows against the table's index isn't
-// enough: two updated rows can clash with each other.
+// Puts every row's new key in a new index, failing at the first already there.
+// It takes every row, as two updated rows can clash with each other, not only
+// with the rest. Runs only when an UPDATE sets a key column, which is rare.
 static int check_key_after_update(const Table *table,
                                   const Constraint *constraint,
                                   const size_t *updating,
@@ -104,8 +100,6 @@ static int check_key_after_update(const Table *table,
     return ok;
 }
 
-// Checks that every key would still be unique after the UPDATE changes
-// the rows in matched.
 static int check_keys_after_update(const Table *table,
                                    const PositionList *matched,
                                    const Changes *changes,
@@ -148,9 +142,8 @@ static int check_keys_after_update(const Table *table,
     return ok;
 }
 
-// Fills out's columns and expressions from update's assignments,
-// checking each column exists, is set at most once, and has an
-// expression of its type.
+// Checks each column exists, is set at most once, and gets an expression of its
+// type.
 static int resolve_changes(ExprContext *ctx, const UpdateStatement *update,
                            Changes *out, char *error, size_t error_size) {
     const Table *table = ctx->table;
@@ -219,10 +212,9 @@ static int compute_changes(const ExprContext *ctx,
     return 1;
 }
 
-// Writes the i-th updated row's new values into row r. They're copied
-// first, as they may point into the row itself: with SET a = b, b = a,
-// writing a frees the text b's new value points to.
-// Returns 1, or 0 if memory ran out (some columns may have changed).
+// Copied first, as they may point into the row itself: with SET a = b, b = a,
+// writing a frees the text b's new value points to. If memory runs out, some
+// columns may have changed.
 static int write_row(Table *table, size_t r, const Changes *changes,
                      size_t i) {
     size_t width = changes->columns.count;

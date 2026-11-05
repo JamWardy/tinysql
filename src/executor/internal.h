@@ -1,9 +1,8 @@
 #ifndef TINYSQL_EXECUTOR_INTERNAL_H
 #define TINYSQL_EXECUTOR_INTERNAL_H
 
-// Shared between the executor's files in this folder, and not for use
-// outside it; the rest of TinySQL includes executor.h. Each statement
-// has its own file, and calls into common.c and where.c.
+// Shared by the executor's files and included nowhere else; the rest of TinySQL
+// includes executor.h.
 
 #include <stddef.h>
 
@@ -12,17 +11,16 @@
 #include "result.h"
 #include "table.h"
 
-// The rows a query matched. These are pointers into the table, not
-// copies, so they're valid only until the table next changes. Whoever
-// fills one frees rows when done.
+// Pointers into the table, valid only until it next changes. Whoever fills one
+// frees rows.
 typedef struct {
     const Row **rows;
     size_t count;
 } RowList;
 
-// A statement's expressions checked against its table, ready to
-// evaluate: each node's type, and each column node's position in a row.
-// Filled by expr_resolve, one tree at a time.
+// A statement's expressions checked against its table: each node's type, and
+// each column node's position in a row. expr_resolve fills it one tree at a
+// time.
 typedef struct {
     const ExprNode *nodes;         // The statement's.
     const Table *table;
@@ -36,22 +34,20 @@ typedef struct {
 #define EXPR_COLUMNS 1     // Columns of the row being read.
 #define EXPR_AGGREGATES 2  // Aggregates, and columns only inside them.
 
-// A WHERE, resolved: a BOOL expression in ctx, whose root is root.
+// A resolved WHERE: a BOOL expression in ctx.
 typedef struct {
     const ExprContext *ctx;
     int root;
 } Filter;
 
-// Positions of rows in a table, in ascending order. Valid only until
-// the table next changes. Whoever fills one frees positions when done.
+// In ascending order, valid only until the table next changes. Whoever fills
+// one frees positions.
 typedef struct {
     size_t *positions;
     size_t count;
 } PositionList;
 
-// Statements, one per file: execute() in executor.c picks the one for
-// the statement's type. Each takes the statement and the database, and
-// on failure writes a message to error and returns 0.
+// Statements, one per file; execute() picks one by the statement's type.
 
 // schema.c: CREATE and DROP, of tables and indexes.
 int execute_create(Database *db, const Statement *stmt,
@@ -85,103 +81,82 @@ int execute_update(Database *db, const Statement *stmt,
 
 // select.c: a SELECT list, which INSERT's RETURNING shares.
 
-// Resolves each of list's items, as expr_resolve does; place names the
-// list in messages, such as "RETURNING".
+// place names the list in messages, such as "RETURNING".
 int select_resolve_list(ExprContext *ctx, const SelectList *list,
                         int allowed, const char *place,
                         char *error, size_t error_size);
 
-// Adds a result column for each of list's resolved items, or each of
-// the table's columns for `*`. An item is headed by its AS name, its
-// column's name if it's only a column, or else its expression rebuilt
-// as text.
+// A column per item, or per table column for `*`. An item is headed by its AS
+// name, its column's name, or else its expression rebuilt as text.
 void select_add_columns(const ExprContext *ctx, const SelectList *list,
                         Result *result);
 
-// Appends a result row with list's items for row, or all of row for
-// `*`. row is NULL for an aggregate SELECT, whose items read only the
-// aggregates already worked out.
+// row is NULL for an aggregate SELECT, whose items read only the aggregates
+// already worked out.
 int select_append_row(const ExprContext *ctx, const SelectList *list,
                       const Row *row, Result *result,
                       char *error, size_t error_size);
 
 // common.c: lookups and checks most statements need.
 
-// Returns the table called name, or NULL after writing an error.
 Table *common_find_table(const Database *db, const char *name,
                          char *error, size_t error_size);
 
-// Checks that a value of type given can go in column. NULL can go in
-// any column. what names the value in the error, e.g. "value" or
-// "WHERE value".
+// NULL can go in any column. what names the value in the message, e.g. "WHERE
+// value".
 int common_check_type(const Column *column, DataType given, const char *what,
                       char *error, size_t error_size);
 
-// Checks that a value of type given can be stored in column by INSERT
-// or UPDATE: it has the right type, and isn't NULL if the column is NOT
-// NULL. A WHERE uses common_check_type instead, since IS NULL is fine
-// on any column.
+// As common_check_type, but also refuses NULL in a NOT NULL column, for INSERT
+// and UPDATE. A WHERE uses common_check_type, as IS NULL is fine on any column.
 int common_check_value(const Column *column, DataType given,
                        char *error, size_t error_size);
 
-// Sets *index to the position of the column called name in table, the
-// position of its value in each row. Every name the SQL uses is looked
-// up this way once, before any row is read.
 int common_find_column(const Table *table, const char *name, size_t *index,
                        char *error, size_t error_size);
 
-// The type of lit's value: its own, or for a `?` its parameter's.
+// Its own, or for a `?` its parameter's.
 DataType common_literal_type(const Literal *lit, const ParamList *params);
 
-// The Value to pass to the table for lit: its own, or for a `?` its
-// parameter's. Its text points into lit or the parameter, so it's only
-// for functions that copy it, and both must outlive it.
+// Its own, or for a `?` its parameter's. Its text points into lit or the
+// parameter, so it's only for functions that copy it.
 Value common_literal_to_value(const Literal *lit, const ParamList *params);
 
-// Fails with the message for a second row with values' key, e.g.
-// "duplicate primary key in table 'users': id = 5". values is laid out
+// e.g. "duplicate primary key in table 'users': id = 5". values is laid out
 // like a row.
 int common_fail_duplicate(const Table *table, const Constraint *constraint,
                           const Value *values, char *error, size_t error_size);
 
 // expr.c: checking and evaluating expressions.
 
-// Readies ctx for stmt's expressions over table, with params for `?`s.
 // stmt, table and params must outlive ctx.
 void expr_init(ExprContext *ctx, const Statement *stmt, const Table *table,
                const ParamList *params);
 
-// Checks the expression at node and fills in its types and columns:
-// every column exists and is allowed, and each operator gets the types
-// it needs. allowed holds EXPR_ flags, and place names where the
-// expression is, such as "VALUES", for messages. Then ctx->types[node]
-// is its type.
+// Checks every column exists and is allowed, and each operator gets the types
+// it needs, filling in ctx->types[node]. allowed holds EXPR_ flags; place names
+// where the expression is, such as "VALUES", for messages.
 int expr_resolve(ExprContext *ctx, int node, int allowed, const char *place,
                  char *error, size_t error_size);
 
-// Sets *out to the value of the resolved expression at node for row,
-// which may be NULL if the expression reads no columns. Fails on
-// overflow or division by zero. Text in *out points into row, the
-// statement or a parameter, so it's only for reading straight away.
+// row may be NULL if the expression reads no columns. Fails on overflow or
+// division by zero. Text in *out points into row, the statement or a parameter,
+// so read it straight away.
 int expr_evaluate(const ExprContext *ctx, int node, const Row *row,
                   Value *out, char *error, size_t error_size);
 
-// Works out every aggregate in the resolved expression at node over
-// rows, for expr_evaluate to read.
+// For expr_evaluate to read afterwards.
 int expr_compute_aggregates(ExprContext *ctx, int node, const RowList *rows,
                             char *error, size_t error_size);
 
-// Returns 1 if the expression at node has an aggregate in it.
 int expr_has_aggregate(const ExprNode *nodes, int node);
 
-// Returns 1 if the expression at node reads any column, so its value
-// may differ from row to row.
 int expr_uses_columns(const ExprNode *nodes, int node);
 
 // plan.c: choosing how to find a statement's rows.
 
-// What a WHERE needs of one column, from comparisons `c op e` (or
-// `e op c`) where e reads no columns, so is the same for every row.
+// The conditions on one column that an index can use: comparisons `c op e`, or
+// `e op c`, reached through ANDs alone, where e reads no columns.
 typedef struct {
     int equal;            // e's node in `c = e`, or -1.
     int lower;            // e's node in `c > e` or `c >= e`, or -1.
@@ -211,9 +186,7 @@ typedef struct {
 // Reading every row, then a plan per key and per index at most.
 #define MAX_PLANS (1 + MAX_KEYS + MAX_INDEXES)
 
-// Every way considered of finding the rows of a table a WHERE matches,
-// and the cheapest. Plans point into bounds, so a PlanChoice mustn't be
-// copied.
+// Plans point into bounds, so a PlanChoice mustn't be copied.
 typedef struct {
     ColumnBounds bounds[MAX_COLUMNS];  // Per column of the table.
     Plan plans[MAX_PLANS];             // plans[0] reads every row.
@@ -222,29 +195,23 @@ typedef struct {
     double matches;  // Estimated rows the whole WHERE matches.
 } PlanChoice;
 
-// Fills choice for the rows of table that filter matches, or every row
-// when filter is NULL. Reads no rows, and evaluates nothing.
+// filter may be NULL, for every row. Reads no rows and evaluates nothing.
 void plan_choose(const Table *table, const Filter *filter,
                  PlanChoice *choice);
 
 // where.c: checking a WHERE and finding the rows it matches.
 
-// Resolves the WHERE expression at root in ctx, checks it's a BOOL, and
-// fills filter, then sets *out to filter, or to NULL (matching every
-// row) when has_where is 0. Done before any row is read, so a bad column
-// or type is reported even when no row would reach that part of the
-// condition. ctx must outlive filter.
+// Sets *out to filter, or to NULL (every row) when has_where is 0. Checks
+// columns and types before any row is read, so a mistake is found even where no
+// row would reach it. ctx must outlive filter.
 int where_resolve(ExprContext *ctx, int has_where, int root, Filter *filter,
                   const Filter **out, char *error, size_t error_size);
 
-// Fills out with the positions of the rows filter matches, in table
-// order, by the way plan_choose picks. Fails if
-// evaluating the WHERE does, for overflow or division by zero.
+// In table order, by the plan plan_choose picks.
 int where_collect_positions(const Table *table, const Filter *filter,
                             PositionList *out, char *error, size_t error_size);
 
-// Fills out with the rows filter matches, in table order. out->rows is
-// a new array, which the caller frees.
+// out->rows is a new array, which the caller frees.
 int where_collect_rows(const Table *table, const Filter *filter, RowList *out,
                        char *error, size_t error_size);
 

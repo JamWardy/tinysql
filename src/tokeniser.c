@@ -126,8 +126,7 @@ static const Keyword keywords[] = {
     { "EXPLAIN", TOKEN_EXPLAIN },
 };
 
-// Compares a word of the given length against an upper-case keyword,
-// ignoring case. Both must have the same length to match.
+// Ignoring case; keyword is upper-case.
 static int keyword_equals(const char *word, int length, const char *keyword) {
     for (int i = 0; i < length; i++) {
         if (keyword[i] == '\0' ||
@@ -159,7 +158,7 @@ static int is_identifier_char(char c) {
     return isalnum((unsigned char)c) || c == '_';
 }
 
-// Appends a token, or writes an error and returns 0 if it doesn't fit.
+// Fails if it doesn't fit.
 static int add_token(
     TokenList *list,
     TokenType type,

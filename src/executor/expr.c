@@ -62,9 +62,7 @@ static int is_comparison(Operator op) {
     return 0;
 }
 
-// Checks that operand, an already resolved node, has type want or is
-// NULL, which fits anything. what names the operator or function for
-// the message.
+// NULL fits anything. what names the operator or function for the message.
 static int check_operand(const ExprContext *ctx, int operand, DataType want,
                          const char *what, char *error, size_t error_size) {
     DataType type = ctx->types[operand];
@@ -176,8 +174,7 @@ static int resolve_binary(ExprContext *ctx, int node, int allowed,
     return 1;
 }
 
-// Resolves node and its children. allowed holds EXPR_ flags; place names
-// where the expression is, such as "WHERE", for messages.
+// place names where the expression is, such as "WHERE", for messages.
 static int resolve_node(ExprContext *ctx, int node, int allowed,
                         const char *place, char *error, size_t error_size) {
     const ExprNode *n = &ctx->nodes[node];

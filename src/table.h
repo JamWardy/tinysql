@@ -9,16 +9,13 @@
 #include "parser.h"  // For DataType, ColumnDef and ConstraintKind.
 #include "value.h"
 
-// Ownership: a Database owns its Tables, and a Table owns every string
-// and array reachable from it. Functions that take strings or Values copy
-// them, so callers (e.g. the parser's reusable Statement) keep their own.
+// Ownership: a Database owns its Tables, and a Table owns every string and
+// array reachable from it. Functions that take strings or Values copy them.
 //
-// Arrays grow with realloc, which may move them, and removing an element
-// moves the ones after it. A Table * is valid only until the next
-// database_create_table or database_drop_table, and a Row * only until
-// the next table_append_row or table_delete_row on its table; look them
-// up again after any of these. Indexes hold row positions, not
-// pointers, and table.c keeps them up to date through every change.
+// Arrays move when they grow or shrink, so a Table * is valid only until the
+// next database_create_table or database_drop_table, and a Row * only until the
+// next table_append_row or table_delete_row on its table. Indexes hold row
+// positions, not pointers.
 
 typedef struct {
     char *name;
@@ -31,28 +28,25 @@ typedef struct {
     size_t count;  // Always the table's column_count.
 } Row;
 
-// Columns of a table, by position in each row: a key's columns, or the
-// columns a query reads.
+// Columns by their position in a row.
 typedef struct {
     size_t positions[MAX_COLUMNS];
     size_t count;
 } ColumnList;
 
-// A rule over one or more columns, e.g. PRIMARY KEY (order_id, product_id).
-// No two rows have the same key: the same values in all its columns. A
-// UNIQUE key with a NULL in any column isn't checked, as in standard
-// SQL, and its row stays out of the index.
+// A PRIMARY KEY or UNIQUE key. A UNIQUE key with a NULL in any column isn't
+// checked, as in standard SQL, and its row stays out of the index.
 typedef struct {
     ConstraintKind kind;
-    ColumnList columns;  // The key's columns, in key order.
+    ColumnList columns;  // In key order.
     Index rows_by_key;   // Each row's position, under its key's hash.
 } Constraint;
 
-// Most B-tree indexes a table can have, from CREATE INDEX.
+// Per table, from CREATE INDEX.
 #define MAX_INDEXES 16
 
-// An index made by CREATE INDEX: a B-tree with an entry for every row,
-// keyed by a copy of the row's values in columns, in order.
+// From CREATE INDEX: an entry per row, keyed by copies of its values in
+// columns.
 typedef struct {
     char *name;
     ColumnList columns;
@@ -75,12 +69,11 @@ typedef struct {
     size_t row_capacity;
 
     // 1 if INSERT chooses IDs for the PRIMARY KEY, which is then one INT
-    // column; the executor and loader check that.
+    // column.
     int autoincrement;
 
-    // The highest ID the key has had, given or chosen, so a deleted
-    // row's ID is never chosen again. 0 before the first, and always 0
-    // without autoincrement.
+    // The highest ID the key has had, given or chosen, so a deleted row's ID is
+    // never chosen again. 0 without autoincrement.
     long long last_id;
 } Table;
 
@@ -93,102 +86,68 @@ typedef struct {
     int unsaved;         // 1 if a change failed to save to the file.
 } Database;
 
-// Leaves db empty, with no transaction open and nothing unsaved.
 void database_init(Database *db);
 
-// Frees every table and leaves db as database_init does, ready to reuse.
 void database_free(Database *db);
 
-// Returns the table with exactly this name, or NULL.
 Table *database_find_table(const Database *db, const char *name);
 
-// Adds a table with copies of name and the column definitions, which
-// become the table's own Columns. Doesn't check for duplicate table or
-// column names; that's the executor's job.
-// Returns the new table, or NULL if memory ran out (db is unchanged).
+// Doesn't check for duplicate table or column names; the executor does.
 Table *database_create_table(Database *db, const char *name,
                              const ColumnDef *columns, size_t column_count);
 
-// Frees table, which must be one of db's, and moves every later table
-// down one place.
 void database_drop_table(Database *db, Table *table);
 
-// Looks for the CREATE INDEX index with exactly this name, in any table.
-// If there is one, sets *table and *index to its table's position in db
-// and its own in the table, and returns 1; otherwise returns 0.
+// Sets *table and *index to the positions of the index's table in db and of the
+// index in its table.
 int database_find_index(const Database *db, const char *name,
                         size_t *table, size_t *index);
 
-// Looks for the column with exactly this name. If there is one, sets
-// *index to its position and returns 1; otherwise returns 0.
 int table_find_column(const Table *table, const char *name, size_t *index);
 
-// Adds a constraint over columns, which must be valid, distinct
-// positions. PRIMARY KEY also makes its columns NOT NULL; UNIQUE
-// doesn't. The table must have no rows yet; nothing checks existing
-// rows against it.
-// Returns 1, or 0 if memory ran out (table is unchanged).
+// columns must be valid, distinct positions. PRIMARY KEY also makes its columns
+// NOT NULL. The table must have no rows: nothing checks existing rows against
+// it.
 int table_add_constraint(Table *table, ConstraintKind kind,
                          const ColumnList *columns);
 
-// If table chooses IDs, sets *column to the position of its PRIMARY
-// KEY's one column and returns 1; otherwise returns 0.
+// The PRIMARY KEY's one column, if the table chooses IDs.
 int table_autoincrement_column(const Table *table, size_t *column);
 
-// Adds an index called name over columns, which must be valid, distinct
-// positions, with an entry for every row. The table must have fewer
-// than MAX_INDEXES; the executor checks the name is free.
-// Returns 1, or 0 if memory ran out (table is unchanged).
+// Builds it from every row. columns must be valid, distinct positions; the
+// executor checks the name is free and the table has room.
 int table_add_index(Table *table, const char *name,
                     const ColumnList *columns);
 
-// Frees the index at position index and moves later ones down.
 void table_drop_index(Table *table, size_t index);
 
-// Looks for a row with the same key as values. If there is one, sets
-// *row to its position and returns 1; otherwise returns 0, as it always
-// does for a key with a NULL. Uses the constraint's index, so it doesn't
-// read every row.
+// Uses the key's index. A key with a NULL is never found.
 //
-// Here and in key_hash and key_equal, values is laid out like a row,
-// one per column by position, and only the key's columns are read. So a
-// key can be checked straight from a row, or from values to be inserted.
+// Here and in key_has_null, key_hash and key_equal, values is laid out like a
+// row and only the key's columns are read, so a key can be checked straight
+// from a row, or from values about to be inserted.
 int table_find_key(const Table *table, const Constraint *constraint,
                    const Value *values, size_t *row);
 
-// Returns 1 if column is in list.
 int column_list_has(const ColumnList *list, size_t column);
 
-// Returns 1 if any of key's values is NULL. values is laid out like a row.
 int key_has_null(const ColumnList *key, const Value *values);
 
-// The hash of the values in key's columns, for an Index. values is
-// laid out like a row, and none of the key's values may be NULL.
+// None of the key's values may be NULL.
 uint64_t key_hash(const ColumnList *key, const Value *values);
 
-// Returns 1 if a and b, each laid out like a row, have the same values
-// in every one of key's columns.
 int key_equal(const ColumnList *key, const Value *a, const Value *b);
 
-// Appends a row with copies of values, which must hold column_count
-// values, each NULL or of its column's type, and no key already in the
-// table; the caller validates first. Adds the row to every index, hash
-// and B-tree, and raises last_id to an ID above it.
-// Returns 1, or 0 if memory ran out (table is unchanged).
+// Copies values, which the caller has checked: each NULL or of its column's
+// type, with no key already in the table. Updates every index, and last_id.
 int table_append_row(Table *table, const Value *values);
 
-// Replaces one value of a row with a copy of value, which must be NULL
-// or of the column's type; the caller validates first. If column is in
-// a key, the row moves to its new key in that index, and an ID above
-// last_id raises it. Keys may clash partway
-// through an UPDATE, so that isn't checked here.
-// Returns 1, or 0 if memory ran out (the old value is kept).
+// Copies value, which the caller has checked. Doesn't check keys, as they may
+// clash partway through an UPDATE. Updates every index, and last_id.
 int table_set_value(Table *table, size_t row, size_t column,
                     const Value *value);
 
-// Frees the row at index and moves every later row down one place, so
-// the rest keep their order, and updates every index to match. index
-// must be less than row_count.
+// Later rows move down one place, keeping their order.
 void table_delete_row(Table *table, size_t index);
 
 #endif

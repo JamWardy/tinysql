@@ -11,8 +11,8 @@
 
 #include "error.h"
 
-// File layout. Integers are unsigned and little-endian, written a byte at
-// a time so the file is the same on every machine.
+// File layout. Integers are unsigned and little-endian, written a byte at a
+// time so the file is the same on every machine.
 //
 //   "TSQL"  u32 version  u32 table_count
 //   per table:   string name  u32 column_count
@@ -28,34 +28,27 @@
 //                per row:    null bitmap
 //                            per non-null value: INT as u64, TEXT as string
 //
-// A string is a u32 byte count followed by the bytes, with no '\0'.
-// Negative INTs are stored as their two's complement.
+// A string is a u32 byte count, then the bytes, with no '\0'. Negative INTs are
+// stored as their two's complement.
 //
-// The null bitmap has one bit per column, rounded up to whole bytes:
-// bit i (bitmap[i / 8] & (1 << (i % 8))) set means column i is NULL,
-// and a NULL has no bytes of its own. Bits past the last column are 0.
-// This costs one byte per row for up to 8 columns, where a flag byte
-// per value would cost one per value. PostgreSQL does the same. SQLite
-// instead stores a type code per value, which is more compact but more
-// complex, and repeats what our column types already fix.
+// The null bitmap has a bit per column, rounded up to whole bytes: bit i
+// (bitmap[i / 8] & (1 << (i % 8))) set means column i is NULL, and a NULL has
+// no bytes of its own. Bits past the last column are 0, as is a NOT NULL
+// column's.
 //
-// A column's flags byte has bit 0 set for NOT NULL; the other bits are 0.
-// A NOT NULL column has no NULLs, so its bitmap bit is never set.
+// A column's flags byte has bit 0 set for NOT NULL; its other bits are 0.
 //
-// autoincrement is 1 if INSERT chooses IDs for the PRIMARY KEY, which
-// must then be one INT column, or 0. last_id is the highest ID that key
-// has had, never below any in its rows and at most the highest INT; it's
-// 0 when autoincrement is.
+// A constraint's kind is 1 for PRIMARY KEY or 2 for UNIQUE. Its columns, and an
+// index's, are positions in the table, in key order. A table has at most one
+// PRIMARY KEY, and no two rows with the same key, leaving out UNIQUE keys with
+// a NULL.
 //
-// An index's columns are positions in the table, in key order. Index
-// names are unique, and no table has one. The trees aren't stored:
-// they're rebuilt as rows are read, like the keys' indexes.
+// autoincrement is 1 if INSERT chooses IDs for the PRIMARY KEY, which must then
+// be one INT column. last_id is at least every ID in the rows, and 0 without
+// autoincrement.
 //
-// A constraint's kind is 1 for PRIMARY KEY or 2 for UNIQUE, and its
-// columns are positions in the table, in key order. A table has at most
-// one PRIMARY KEY, whose columns are NOT NULL, and no two rows with the
-// same key, leaving out UNIQUE keys with a NULL. Indexes aren't stored:
-// they're rebuilt as rows are read.
+// Index names are unique, and no table has one. Indexes, hash and B-tree,
+// aren't stored: they're rebuilt as the rows are read.
 //
 // Older versions are still read, and are saved as version 7:
 //   version 6 has no indexes.
@@ -81,11 +74,10 @@
 #define FILE_CONSTRAINT_PRIMARY_KEY 1
 #define FILE_CONSTRAINT_UNIQUE      2
 
-// Bytes in a row's null bitmap.
 #define BITMAP_SIZE(column_count) (((column_count) + 7) / 8)
 
-// A row's null bitmap, with room for the most columns a table can have.
-// Only the first BITMAP_SIZE(column_count) bytes go in the file.
+// Room for the most columns a table can have; only the first
+// BITMAP_SIZE(column_count) bytes go in the file.
 typedef struct {
     unsigned char bytes[BITMAP_SIZE(MAX_COLUMNS)];
 } NullBitmap;
@@ -192,8 +184,7 @@ static void write_table(FILE *file, const Table *table) {
     }
 }
 
-// Returns a new string, path with ".tmp" on the end, or NULL if memory
-// ran out. The caller frees it.
+// path with ".tmp" on the end, or NULL if memory ran out.
 static char *make_temp_path(const char *path) {
     size_t length = strlen(path);
     char *temp_path = malloc(length + sizeof(".tmp"));
@@ -272,8 +263,6 @@ typedef struct {
     size_t error_size;
 } Reader;
 
-// Records an error message and returns 0, so callers can
-// `return read_fail(...)`.
 static int read_fail(Reader *r, const char *format, ...) {
     va_list args;
 
@@ -318,7 +307,7 @@ static long long to_signed(uint64_t n) {
     return -(long long)(UINT64_MAX - n) - 1;
 }
 
-// Reads a string's byte count, which must be at most max.
+// At most max.
 static int read_length(Reader *r, uint64_t max, size_t *out) {
     uint64_t length;
 
@@ -337,8 +326,8 @@ static int read_length(Reader *r, uint64_t max, size_t *out) {
     return 1;
 }
 
-// Reads length bytes into out and adds the '\0'. A '\0' inside the data
-// would silently cut the string short, so it's rejected.
+// Adds the '\0'. A '\0' inside the data would silently cut the string short, so
+// it's rejected.
 static int read_chars(Reader *r, char *out, size_t length) {
     if (!read_bytes(r, out, length)) {
         return 0;
@@ -351,9 +340,8 @@ static int read_chars(Reader *r, char *out, size_t length) {
     return 1;
 }
 
-// Reads a table or column name into out (size bytes). Callers pass
-// MAX_TOKEN_LENGTH arrays, the same limit the tokeniser puts on names
-// typed in SQL.
+// Callers pass MAX_TOKEN_LENGTH arrays, the tokeniser's limit on names typed in
+// SQL.
 static int read_name(Reader *r, char *out, size_t size) {
     size_t length;
 
@@ -367,7 +355,7 @@ static int read_name(Reader *r, char *out, size_t size) {
     return read_chars(r, out, length);
 }
 
-// Reads a TEXT value into a new heap string, which the caller frees.
+// Into a new heap string, which the caller frees.
 static int read_text(Reader *r, char **out) {
     size_t length;
 
@@ -389,8 +377,7 @@ static int read_text(Reader *r, char **out) {
     return 1;
 }
 
-// Reads a row's null bitmap into out. Version 1 rows have none, so it's
-// left all 0: nothing is NULL.
+// Version 1 rows have none: nothing is NULL.
 static int read_bitmap(Reader *r, const Table *table, NullBitmap *out) {
     size_t size = BITMAP_SIZE(table->column_count);
 
@@ -419,7 +406,6 @@ static int read_bitmap(Reader *r, const Table *table, NullBitmap *out) {
     return 1;
 }
 
-// Reads one row's values and appends it to table.
 static int read_row(Reader *r, Table *table) {
     NullBitmap bitmap;
     Value values[MAX_COLUMNS];
@@ -477,8 +463,7 @@ static int read_row(Reader *r, Table *table) {
     return ok ? 1 : read_fail(r, "out of memory");
 }
 
-// Reads one column of the table named table_name into out. Columns in
-// files before version 3 have no flags byte, so none is NOT NULL.
+// Files before version 3 have no flags byte: no column is NOT NULL.
 static int read_column(Reader *r, const char *table_name, ColumnDef *out) {
     uint64_t type;
     uint64_t flags = 0;
@@ -508,8 +493,7 @@ static int read_column(Reader *r, const char *table_name, ColumnDef *out) {
     return read_name(r, out->name, sizeof(out->name));
 }
 
-// Reads a key's or index's column positions into out, checking each is
-// one of table's columns, and only there once. what is "key" or "index",
+// Checks each is one of table's columns, named once. what is "key" or "index",
 // for messages.
 static int read_key_columns(Reader *r, const Table *table, const char *what,
                             ColumnList *out) {
@@ -549,8 +533,8 @@ static int read_key_columns(Reader *r, const Table *table, const char *what,
     return 1;
 }
 
-// Reads table's constraints, which come before its rows, so each row is
-// checked against them as it's read. Files before version 4 have none.
+// They come before the rows, so each row is checked against them as it's read.
+// Files before version 4 have none.
 static int read_constraints(Reader *r, Table *table) {
     uint64_t count;
 
@@ -598,9 +582,8 @@ static int read_constraints(Reader *r, Table *table) {
     return 1;
 }
 
-// Reads whether table chooses IDs, and its last ID, which files before
-// version 6 don't have. Checks a table that chooses IDs has a PRIMARY
-// KEY of one INT column.
+// Files before version 6 have neither. A table that chooses IDs must have a
+// PRIMARY KEY of one INT column.
 static int read_autoincrement(Reader *r, Table *table) {
     uint64_t autoincrement = 0;
     uint64_t last_id = 0;
@@ -637,9 +620,8 @@ static int read_autoincrement(Reader *r, Table *table) {
     return 1;
 }
 
-// Reads table's CREATE INDEX indexes, which files before version 7
-// don't have, and adds them while it has no rows, so each fills as the
-// rows are read.
+// Files before version 7 have none. Each is added while the table is empty, so
+// it fills as the rows are read.
 static int read_indexes(Reader *r, Table *table) {
     uint64_t count;
 
@@ -669,9 +651,8 @@ static int read_indexes(Reader *r, Table *table) {
     return 1;
 }
 
-// Checks no index has the name of a table or of another index, as they
-// share names. Run once every table is read, as a table later in the
-// file may have the name.
+// Tables and indexes share names. Run once every table is read, as a later
+// table may have the name.
 static int check_index_names(Reader *r, const Database *db) {
     for (size_t t = 0; t < db->count; t++) {
         const Table *table = &db->tables[t];

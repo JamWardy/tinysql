@@ -5,8 +5,7 @@
 
 #include "error.h"
 
-// Fills out with the position of each of key's columns, checking that
-// each is one of the new table's columns, and only named once.
+// Checks each is one of the new table's columns, named once.
 static int resolve_key(const CreateStatement *create, const KeyDef *key,
                        ColumnList *out, char *error, size_t error_size) {
     const char *kind = constraint_kind_name(key->kind);
@@ -39,8 +38,7 @@ static int resolve_key(const CreateStatement *create, const KeyDef *key,
     return 1;
 }
 
-// Checks the AUTOINCREMENT column, if there is one, is an INT and the
-// whole PRIMARY KEY. keys are create's keys, resolved.
+// keys are create's keys, resolved.
 static int check_autoincrement(const CreateStatement *create,
                                const ColumnList *keys,
                                char *error, size_t error_size) {
@@ -67,7 +65,6 @@ static int check_autoincrement(const CreateStatement *create,
                 column->name);
 }
 
-// Returns 1 if a and b hold the same columns, in any order.
 static int same_columns(const ColumnList *a, const ColumnList *b) {
     if (a->count != b->count) {
         return 0;
@@ -80,8 +77,7 @@ static int same_columns(const ColumnList *a, const ColumnList *b) {
     return 1;
 }
 
-// Fails with the message for a key declared twice, e.g.
-// "key (user_id, idempotency_key) is declared twice".
+// e.g. "key (user_id, idempotency_key) is declared twice".
 static int fail_same_key(const CreateStatement *create, const ColumnList *key,
                          char *error, size_t error_size) {
     char text[256];  // Cut short if it's long; it's only for the message.
@@ -101,7 +97,6 @@ static int fail_same_key(const CreateStatement *create, const ColumnList *key,
 }
 
 // Tables and indexes share one set of names, as in Postgres and SQLite.
-// Fails if a table or an index already has name.
 static int check_name_free(const Database *db, const char *name,
                            char *error, size_t error_size) {
     size_t table;

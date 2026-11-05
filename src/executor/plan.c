@@ -4,8 +4,8 @@
 // how many rows each would read, a cost for each, and the cheapest.
 // Without statistics, estimates use Postgres's default guesses.
 
-// Fraction of rows guessed to match `c = e`, and comparisons the
-// planner can't estimate otherwise.
+// Fraction of rows guessed to match `x = y`, or anything else the planner can't
+// estimate.
 #define DEFAULT_EQUAL 0.005
 // Fraction guessed to match one bound, `c > e` or `c <= e`.
 #define DEFAULT_RANGE (1.0 / 3.0)
@@ -80,8 +80,7 @@ static void find_bounds(const Filter *filter, int node, ColumnBounds *bounds) {
     }
 }
 
-// Fraction of rows the condition at node is guessed to match, by
-// Postgres's rules for when there are no statistics.
+// By Postgres's rules for when there are no statistics.
 static double estimate(const ExprContext *ctx, int node) {
     const ExprNode *n = &ctx->nodes[node];
 
@@ -161,8 +160,7 @@ static void add_plan(PlanChoice *choice, PlanKind kind, double reads,
     plan->cost = reads * cost_per_row;
 }
 
-// Adds a plan for each key the WHERE pins down with =: it finds at most
-// one row, through the key's hash index.
+// Each finds at most one row, through the key's hash index.
 static void add_key_plans(const Table *table, PlanChoice *choice) {
     for (size_t c = 0; c < table->constraint_count; c++) {
         const ColumnList *key = &table->constraints[c].columns;
@@ -180,8 +178,8 @@ static void add_key_plans(const Table *table, PlanChoice *choice) {
     }
 }
 
-// Adds a plan for each B-tree index whose leading columns the WHERE pins
-// with =, or whose first unpinned column it bounds.
+// For each index whose leading columns the WHERE pins with =, or whose first
+// unpinned column it bounds.
 static void add_index_plans(const Table *table, PlanChoice *choice) {
     for (size_t i = 0; i < table->index_count; i++) {
         const TreeIndex *index = &table->indexes[i];

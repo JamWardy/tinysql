@@ -3,9 +3,8 @@
 
 #include "result.h"
 
-// Prints what a statement gave back, as the REPL shows it: a SELECT's
-// rows as a table, or how many rows a DELETE or UPDATE changed. CREATE,
-// INSERT and DROP print nothing.
+// Rows as a table, or how many rows a DELETE or UPDATE changed. Statements that
+// give back nothing print nothing.
 void print_result(const Result *result);
 
 #endif

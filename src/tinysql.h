@@ -31,25 +31,19 @@
 #include "result.h"
 #include "table.h"    // For Database, database_init and database_free.
 
-// Big enough for any error message TinySQL writes; a smaller buffer
-// cuts the message short.
+// Big enough for any message TinySQL writes.
 #define TINYSQL_MAX_ERROR 256
 
-// Runs one SQL statement, such as "SELECT * FROM users;", against db and
-// fills result, which must be empty, as result_init and result_free
-// leave it. After a change, db is saved to path, unless path is NULL or
-// a transaction is open; BEGIN, COMMIT and ROLLBACK work as GRAMMAR.md
-// describes. The caller frees result with result_free.
+// Runs one statement. result must be empty, as result_init leaves it, and the
+// caller frees it with result_free. After a change, db is saved to path, unless
+// path is NULL or a transaction is open.
 //
-// params holds param_count values, one for each `?` in sql, in order;
-// it may be NULL when param_count is 0. Each is INT, TEXT (with its
-// text '\0'-terminated), BOOL or NULL. TinySQL copies any text it keeps, so
-// params is only read during the call.
+// params holds one value per `?`, in order: INT, TEXT ('\0'-terminated), BOOL
+// or NULL. It's only read during the call.
 //
-// On success returns 1. On failure writes a message to error, leaves
-// result empty and returns 0. Usually db is then unchanged, but if only
-// saving failed the change stays in memory, and is saved by the next
-// save that works, such as the next change's or BEGIN's.
+// On failure result is left empty, and db is usually unchanged. But if only
+// saving failed, the change stays in memory, and the next save that works saves
+// it too.
 int tinysql_run(Database *db, const char *path, const char *sql,
                 const Value *params, size_t param_count,
                 Result *result, char *error, size_t error_size);

@@ -7,7 +7,6 @@
 // the same as the empty string ''.
 #define NULL_TEXT "NULL"
 
-// Number of characters the value takes when printed.
 static int value_width(const Value *value) {
     switch (value->type) {
         case TYPE_INT:  return snprintf(NULL, 0, "%lld", value->as.integer);

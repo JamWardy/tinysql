@@ -24,11 +24,9 @@ static int choose_id(const Table *table, Value *values,
     return 1;
 }
 
-// Fills values, laid out like a row, from insert's expressions: in the
-// table's order, or in the columns it names, with the others NULL.
-// Checks each value given has its column's type. Text in values points
-// into the statement or a parameter.
-// Returns 1, or 0 with a message in error.
+// In the table's order, or in the columns insert names, with the others NULL.
+// Checks each value given has its column's type. Text in values points into the
+// statement or a parameter.
 static int fill_values(ExprContext *ctx, const Statement *stmt,
                        Value *values, char *error, size_t error_size) {
     const InsertStatement *insert = &stmt->as.insert;
@@ -76,8 +74,7 @@ static int fill_values(ExprContext *ctx, const Statement *stmt,
     return 1;
 }
 
-// Checks every value can be stored in its column, left-out ones
-// included, so a NULL isn't in a NOT NULL column.
+// Left-out ones included, so no NULL goes in a NOT NULL column.
 static int check_values(const Table *table, const Value *values,
                         char *error, size_t error_size) {
     for (size_t i = 0; i < table->column_count; i++) {

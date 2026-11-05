@@ -109,7 +109,6 @@ Table *database_create_table(Database *db, const char *name,
 }
 
 void database_drop_table(Database *db, Table *table) {
-    // Pointer subtraction gives the table's index in the array.
     assert(table >= db->tables && table < db->tables + db->count);
     size_t index = (size_t)(table - db->tables);
 
@@ -133,8 +132,7 @@ int database_find_index(const Database *db, const char *name,
     return 0;
 }
 
-// Sets key to index's key for a row laid out as values. The key borrows
-// any text from values.
+// The key borrows any text from values.
 static void index_key(const TreeIndex *index, const Value *values,
                       Value *key) {
     for (size_t i = 0; i < index->columns.count; i++) {
@@ -142,8 +140,7 @@ static void index_key(const TreeIndex *index, const Value *values,
     }
 }
 
-// Removes row from the first count B-tree indexes, undoing a change that
-// ran out of memory partway. values is laid out like the row.
+// Undoes a change that ran out of memory partway.
 static void remove_from_indexes(Table *table, size_t count,
                                 const Value *values, size_t row) {
     Value key[MAX_COLUMNS];
@@ -352,8 +349,8 @@ int table_autoincrement_column(const Table *table, size_t *column) {
     return 0;
 }
 
-// Raises the table's last ID to value, if it's written to the ID column
-// and higher, so a later INSERT never chooses it.
+// Raises last_id to value if it's a higher ID, so a later INSERT never chooses
+// it.
 static void note_id(Table *table, size_t column, const Value *value) {
     size_t id_column;
 
@@ -437,10 +434,8 @@ int table_append_row(Table *table, const Value *values) {
     return 1;
 }
 
-// Moves row to its new key in each B-tree index over column, for when
-// column's value becomes value. The new keys go in first, as only that
-// can fail, so running out of memory changes nothing.
-// Returns 1, or 0 if memory ran out.
+// The new keys go in first, as only that can fail, so running out of memory
+// changes nothing.
 static int move_in_indexes(Table *table, size_t row, size_t column,
                            const Value *value) {
     const Value *values = table->rows[row].values;
@@ -515,9 +510,8 @@ int table_set_value(Table *table, size_t row, size_t column,
         }
     }
 
-    // Free the old value only once the new one is ready, so a failure
-    // leaves the old one in place. The old value may be NULL, which
-    // values_free knows has no text to free.
+    // Free the old value only once the new one is ready, so a failure leaves
+    // the old one in place.
     Value *slot = &table->rows[row].values[column];
     values_free(slot, 1);
     *slot = copy;
@@ -564,7 +558,7 @@ void table_delete_row(Table *table, size_t index) {
     values_free(row->values, row->count);
     free(row->values);
 
-    // Close the gap. The array keeps its capacity for later inserts.
+    // The array keeps its capacity for later inserts.
     memmove(row, row + 1,
             (table->row_count - index - 1) * sizeof(*row));
     table->row_count--;

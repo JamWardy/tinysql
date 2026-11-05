@@ -5,16 +5,13 @@
 
 #include "table.h"
 
-// Writes all of db to path. The file is replaced only once the new copy
-// is complete, so a failure part-way leaves the previous version intact.
-// Returns 1, or writes a message to error and returns 0.
+// Writes a complete copy beside path, then renames it over path, so a failure
+// partway leaves the old file intact.
 int database_save(const Database *db, const char *path,
                   char *error, size_t error_size);
 
-// Loads path into db, which must be empty. A missing file isn't an error:
-// db stays empty and the file is created by the first save. On failure
-// (unreadable or invalid file) writes a message to error, leaves db
-// empty and returns 0.
+// db must be empty. A missing file isn't an error: db stays empty, and the
+// first save creates the file. On failure db is left empty.
 int database_load(Database *db, const char *path,
                   char *error, size_t error_size);
 

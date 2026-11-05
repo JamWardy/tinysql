@@ -18,11 +18,10 @@ typedef enum {
     CONSTRAINT_UNIQUE
 } ConstraintKind;
 
-// A column in CREATE TABLE: `name TEXT` or `id INT NOT NULL`.
 typedef struct {
     char name[MAX_TOKEN_LENGTH];
     DataType type;
-    int not_null;  // 1 for NOT NULL.
+    int not_null;
 } ColumnDef;
 
 typedef enum {
@@ -33,14 +32,13 @@ typedef enum {
     LITERAL_PARAM  // A `?`, whose value is passed separately.
 } LiteralKind;
 
-// A value written in the SQL: `25`, `'Alice'`, `TRUE`, `NULL` or `?`.
-// kind says which member of as holds it; NULL has none.
+// kind says which member of as holds the value; NULL has none.
 typedef struct {
     LiteralKind kind;
     union {
         long long integer;
         char text[MAX_TOKEN_LENGTH];
-        int boolean;  // 1 for TRUE, 0 for FALSE.
+        int boolean;
         int param;    // Which `?`, from 0, left to right in the statement.
     } as;
 } Literal;
@@ -106,8 +104,7 @@ typedef struct {
 // Each node takes at least one token, so a statement can't need more.
 #define MAX_NODES MAX_TOKENS
 
-// A key in CREATE TABLE: `id INT PRIMARY KEY` or `UNIQUE (user_id,
-// idempotency_key)`. The executor checks the names are columns.
+// From CREATE TABLE. The executor checks the names are columns.
 typedef struct {
     ConstraintKind kind;
     char columns[MAX_COLUMNS][MAX_TOKEN_LENGTH];  // In key order.
@@ -121,8 +118,8 @@ typedef struct {
     KeyDef keys[MAX_KEYS];  // In the order written.
     int key_count;
 
-    // 1 if a column says AUTOINCREMENT, otherwise autoincrement_column
-    // is unused. The executor checks it's an INT PRIMARY KEY.
+    // 1 if a column says AUTOINCREMENT; the executor checks it's an INT PRIMARY
+    // KEY.
     int has_autoincrement;
     int autoincrement_column;  // Its index in columns.
 } CreateStatement;
@@ -146,26 +143,24 @@ typedef struct {
     char columns[MAX_COLUMNS][MAX_TOKEN_LENGTH];
     int column_count;
 
-    int values[MAX_COLUMNS];  // Each the root node of an expression.
+    int values[MAX_COLUMNS];  // Root nodes.
     int value_count;
 
-    int has_returning;     // 1 if there's a RETURNING, otherwise
-                           // returning is unused.
+    int has_returning;
     SelectList returning;  // Read from the inserted row.
 } InsertStatement;
 
 typedef struct {
     SelectList list;
 
-    int has_where;   // 1 if there's a WHERE, otherwise where is unused.
+    int has_where;
     int where;       // The root node of a BOOL expression.
 
-    int has_order;   // 1 if there's an ORDER BY, otherwise rows keep
-                     // the order they were inserted in.
-    int order_by;    // The root node of the expression to sort by.
-    int descending;  // 1 for DESC; ASC is the default.
+    int has_order;   // Without one, rows keep insertion order.
+    int order_by;    // The root node.
+    int descending;
 
-    int has_limit;   // 1 if there's a LIMIT, otherwise every row.
+    int has_limit;
     Literal limit;   // An INT, never negative, or a `?`.
 
     // 1 for FOR UPDATE, which locks nothing more yet: TinySQL runs one
@@ -189,7 +184,7 @@ typedef struct {
 // A column given a new value in UPDATE: `age = 26` or `stock = stock - ?`.
 typedef struct {
     char column[MAX_TOKEN_LENGTH];
-    int value;  // The root node of an expression.
+    int value;  // The root node.
 } Assignment;
 
 typedef struct {
@@ -236,30 +231,23 @@ typedef struct {
     } as;
 } Statement;
 
-// The type as written in SQL: "INT", "TEXT", "BOOL" or "NULL".
 const char *data_type_name(DataType type);
 
-// The operator as written in SQL, e.g. "+", "<=" or "AND".
 const char *operator_name(Operator op);
 
-// The function as written in SQL, e.g. "COUNT".
 const char *aggregate_name(AggregateFunc func);
 
-// The constraint as written in SQL: "PRIMARY KEY" or "UNIQUE".
 const char *constraint_kind_name(ConstraintKind kind);
 
-// Read a Literal's value. The kind must match: reading the wrong member
-// is a programmer error and stops the program.
+// The kind must match, or the program stops.
 long long literal_as_int(const Literal *lit);
 const char *literal_as_text(const Literal *lit);
 
-// Writes node's expression into out as SQL, rebuilt from the tree with
-// brackets only where they're needed, e.g. "price * quantity" or
-// "(a + b) * 2". Cut short to fit size bytes.
+// Rebuilds the expression as SQL, with brackets only where needed. Cut short
+// to fit.
 void expr_to_text(const ExprNode *nodes, int node, char *out, size_t size);
 
-// Parses one statement from tokens. On success, fills out and returns 1.
-// On failure, writes a message to error and returns 0; out must not be used.
+// On failure, out must not be used.
 int parse(const TokenList *tokens, Statement *out,
           char *error, size_t error_size);
 

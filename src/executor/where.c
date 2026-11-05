@@ -81,9 +81,8 @@ static int past_range(const Plan *plan, const Value *key,
     return 0;
 }
 
-// Sets *out to the value of e, the bound at node, which reads no
-// columns, so there's no row to give it. Sets *none if it's NULL, as
-// comparing with NULL is never true, so nothing can match.
+// e reads no columns, so there's no row to give it. Sets *none if it's NULL, as
+// then nothing can match.
 static int evaluate_bound(const Filter *filter, int node, Value *out,
                           int *none, char *error, size_t error_size) {
     if (!expr_evaluate(filter->ctx, node, NULL, out, error, error_size)) {
@@ -95,8 +94,7 @@ static int evaluate_bound(const Filter *filter, int node, Value *out,
     return 1;
 }
 
-// Fills out with the positions of the rows in plan's range of its
-// index, in table order. out->positions has room for every row.
+// In table order. out->positions has room for every row.
 static int collect_from_index(const Filter *filter, const PlanChoice *choice,
                               const Plan *plan, PositionList *out,
                               char *error, size_t error_size) {
@@ -154,8 +152,7 @@ static int collect_from_index(const Filter *filter, const PlanChoice *choice,
     return 1;
 }
 
-// Sets *found to whether plan's key has a row with the values its WHERE
-// pins it to, and *row to its position if so. A NULL finds nothing.
+// A NULL finds nothing.
 static int find_by_key(const Table *table, const Filter *filter,
                        const PlanChoice *choice, const Plan *plan,
                        size_t *row, int *found,

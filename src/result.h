@@ -6,21 +6,18 @@
 #include "parser.h"  // For DataType, StatementType and MAX_COLUMNS.
 #include "table.h"   // For Value.
 
-// Room for a column or AS name, or a short expression heading such as
-// "COUNT(name)" or "price * quantity"; longer ones are cut short.
+// Room for a heading such as "COUNT(name)" or "price * quantity"; longer ones
+// are cut short.
 #define MAX_HEADING (MAX_TOKEN_LENGTH + 8)
 
-// What a statement gives back. A SELECT, or an INSERT with RETURNING,
-// fills the columns and rows; the other statements leave them empty.
-// INSERT, UPDATE and DELETE set changed.
-//
-// The Result owns copies of its values, so they stay valid however the
-// database changes, until result_free.
+// A SELECT, or an INSERT with RETURNING, fills the columns and rows; INSERT,
+// UPDATE and DELETE set changed. The Result owns copies of its values, so they
+// stay valid until result_free, however the database changes.
 typedef struct {
     StatementType type;  // The statement that filled it; unset while empty.
 
     char names[MAX_COLUMNS][MAX_HEADING];
-    DataType types[MAX_COLUMNS];  // Each column's type; values may be NULL.
+    DataType types[MAX_COLUMNS];  // Values may be NULL too.
     size_t column_count;
 
     Value *values;  // row_count rows of column_count values, row by row.
@@ -30,21 +27,16 @@ typedef struct {
     size_t changed;  // Rows inserted, updated or deleted.
 } Result;
 
-// Leaves result empty: no columns, no rows, nothing changed.
 void result_init(Result *result);
 
-// Frees result's values and leaves it empty, ready to reuse.
 void result_free(Result *result);
 
-// Adds a column called name, cut short to fit, holding type. The result
-// must have fewer than MAX_COLUMNS columns and no rows yet.
+// name is cut short to fit. Every column comes before any row.
 void result_add_column(Result *result, const char *name, DataType type);
 
-// Appends a row with copies of values, which must hold column_count
-// values. Returns 1, or 0 if memory ran out (result is unchanged).
+// Copies values, which holds column_count values.
 int result_append_row(Result *result, const Value *values);
 
-// Returns the value in row at column, which must both be in range.
 const Value *result_value(const Result *result, size_t row, size_t column);
 
 #endif

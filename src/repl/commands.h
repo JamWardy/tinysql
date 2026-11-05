@@ -3,12 +3,8 @@
 
 #include "table.h"
 
-// Runs a command such as ".tables" or ".schema users", as read by
-// read_statement, printing its output or an error. Returns 0 if the
-// command was .exit, otherwise 1.
-//
-// Commands aren't SQL: they're handled here, without the tokeniser or
-// parser, and never change the database.
+// Returns 0 for .exit. Commands aren't SQL: they skip the tokeniser and parser,
+// and never change the database.
 int run_command(const Database *db, const char *command);
 
 #endif

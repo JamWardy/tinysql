@@ -3,8 +3,7 @@
 #include "error.h"
 #include "text.h"
 
-// Adds a key of the given kind to create, with no columns yet. A table
-// can have only one PRIMARY KEY. Returns the key, or NULL on failure.
+// With no columns yet. A table can have only one PRIMARY KEY.
 static KeyDef *start_key(Parser *p, CreateStatement *create,
                          ConstraintKind kind) {
     if (kind == CONSTRAINT_PRIMARY_KEY) {
@@ -40,7 +39,6 @@ static int add_key_column(Parser *p, KeyDef *key, const char *name) {
     return 1;
 }
 
-// Adds a key of the given kind on the one column called name.
 static int add_column_key(Parser *p, CreateStatement *create,
                           ConstraintKind kind, const char *name) {
     KeyDef *key = start_key(p, create, kind);
@@ -48,8 +46,6 @@ static int add_column_key(Parser *p, CreateStatement *create,
     return key && add_key_column(p, key, name);
 }
 
-// Adds a column to create.
-//
 // column_def        = IDENTIFIER column_type { column_constraint }
 // column_type       = INT | TEXT
 // column_constraint = NOT NULL | PRIMARY KEY | UNIQUE | AUTOINCREMENT

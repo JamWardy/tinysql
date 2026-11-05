@@ -4,9 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-// Fewest entries in a leaf, or separators in an inner node, other than
-// the root. A full node that gains one splits into two at least this
-// full, and a node that falls below it borrows or merges.
+// Fewest entries or separators in a node, the root aside. A full node that
+// gains one splits into two at least this full.
 #define MIN_COUNT (BTREE_ORDER / 2)
 
 // So a leaf left under half full by btree_remove still has an entry.
@@ -16,13 +15,12 @@ _Static_assert(BTREE_ORDER >= 4, "BTREE_ORDER must be at least 4");
 // entries by at least MIN_COUNT.
 #define MAX_DEPTH 64
 
-// A leaf holds count entries. An inner node holds count separators and
-// count + 1 children: every entry under children[i] sorts before
-// separator i, and every entry under children[i + 1] sorts with or
-// after it. Each array has room for one more than BTREE_ORDER, which a
-// node holds only briefly, just before it splits.
+// An inner node has count separators and count + 1 children: entries under
+// children[i] sort before separator i, and those under children[i + 1] with or
+// after it. The arrays have room for one more than BTREE_ORDER, held just
+// before a split.
 struct BTreeNode {
-    int leaf;      // 1 for a leaf, 0 for an inner node.
+    int leaf;
     size_t count;
 
     size_t rows[BTREE_ORDER + 1];             // Each entry's or separator's.
@@ -47,7 +45,6 @@ static Value *key_at(const BTree *tree, const BTreeNode *node, size_t i) {
     return (Value *)&node->keys[i * tree->width];
 }
 
-// Compares the first width values of two keys.
 static int compare_prefix(const Value *a, const Value *b, size_t width) {
     for (size_t i = 0; i < width; i++) {
         int c = value_compare(&a[i], &b[i]);
@@ -58,7 +55,7 @@ static int compare_prefix(const Value *a, const Value *b, size_t width) {
     return 0;
 }
 
-// Compares two entries by key, then by row.
+// By key, then by row.
 static int compare_entries(const BTree *tree, const Value *a_key,
                            size_t a_row, const Value *b_key, size_t b_row) {
     int c = compare_prefix(a_key, b_key, tree->width);
@@ -69,8 +66,7 @@ static int compare_entries(const BTree *tree, const Value *a_key,
     return (a_row > b_row) - (a_row < b_row);
 }
 
-// Sets out to a copy of key's width values.
-// Returns 1, or 0 if memory ran out (nothing is left to free).
+// On failure, nothing is left to free.
 static int copy_key(const BTree *tree, Value *out, const Value *key) {
     for (size_t i = 0; i < tree->width; i++) {
         if (!value_copy(&out[i], &key[i])) {
@@ -107,8 +103,7 @@ static void free_node(const BTree *tree, BTreeNode *node) {
     free(node);
 }
 
-// Moves count keys and rows from position from in src to position to
-// in dest, which may be the same node. Ownership of any text moves too.
+// dest may be src. Ownership of any text moves too.
 static void move_keys(const BTree *tree, BTreeNode *dest, size_t to,
                       BTreeNode *src, size_t from, size_t count) {
     memmove(key_at(tree, dest, to), key_at(tree, src, from),
@@ -116,15 +111,14 @@ static void move_keys(const BTree *tree, BTreeNode *dest, size_t to,
     memmove(&dest->rows[to], &src->rows[from], count * sizeof(size_t));
 }
 
-// The same for count children of inner nodes.
+// The same, for children.
 static void move_children(BTreeNode *dest, size_t to, BTreeNode *src,
                           size_t from, size_t count) {
     memmove(&dest->children[to], &src->children[from],
             count * sizeof(BTreeNode *));
 }
 
-// Puts key, whose text node takes over, and row at position i, moving
-// later ones up one place. node must have room.
+// node takes over key's text. Later keys move up a place; node must have room.
 static void put_key(const BTree *tree, BTreeNode *node, size_t i,
                     const Value *key, size_t row) {
     move_keys(tree, node, i + 1, node, i, node->count - i);
@@ -133,8 +127,7 @@ static void put_key(const BTree *tree, BTreeNode *node, size_t i,
     node->count++;
 }
 
-// Takes out the key at position i, without freeing it, moving later ones
-// down one place.
+// Doesn't free the key. Later keys move down a place.
 static void take_key(const BTree *tree, BTreeNode *node, size_t i) {
     move_keys(tree, node, i, node, i + 1, node->count - i - 1);
     node->count--;
@@ -142,7 +135,6 @@ static void take_key(const BTree *tree, BTreeNode *node, size_t i) {
 
 // ---- Searching ----
 
-// Which child of inner node an entry with key and row is under.
 static size_t child_for_entry(const BTree *tree, const BTreeNode *node,
                               const Value *key, size_t row) {
     size_t i = 0;
@@ -155,7 +147,6 @@ static size_t child_for_entry(const BTree *tree, const BTreeNode *node,
     return i;
 }
 
-// Fills path with the way down to the leaf where key and row belong.
 // The tree mustn't be empty.
 static void find_leaf(const BTree *tree, const Value *key, size_t row,
                       Path *path) {
@@ -177,7 +168,7 @@ static void find_leaf(const BTree *tree, const Value *key, size_t row,
     }
 }
 
-// The first position in leaf whose entry sorts with or after key and row.
+// The first slot whose entry sorts with or after key and row.
 static size_t slot_in_leaf(const BTree *tree, const BTreeNode *leaf,
                            const Value *key, size_t row) {
     size_t i = 0;
@@ -190,18 +181,15 @@ static size_t slot_in_leaf(const BTree *tree, const BTreeNode *leaf,
     return i;
 }
 
-// Returns 1 if an entry whose key is key sorts before probe's first
-// prefix_width values, or with them too if inclusive is 0. Then it's
-// before the first entry btree_seek_first wants.
+// Whether an entry with this key comes before what btree_seek_first wants.
 static int before_target(const Value *key, const Value *probe,
                          size_t prefix_width, int inclusive) {
     int c = compare_prefix(key, probe, prefix_width);
     return inclusive ? c < 0 : c <= 0;
 }
 
-// Sets *leaf and *slot to the first entry btree_seek_first wants. *slot
-// may be one past the last entry of the tree's last leaf, when every
-// entry is before it. The tree mustn't be empty.
+// *slot may be one past the end of the last leaf, when every entry is before
+// the target. The tree mustn't be empty.
 static void find_first(const BTree *tree, const Value *probe,
                        size_t prefix_width, int inclusive,
                        const BTreeNode **leaf, size_t *slot) {
@@ -239,9 +227,8 @@ static void find_first(const BTree *tree, const Value *probe,
 
 // ---- Inserting ----
 
-// Returns how many new nodes inserting into path's leaf needs: one for
-// each full node from the leaf up, as each will split, and one more for
-// a new root if the root splits too.
+// One per full node from the leaf up, as each will split, plus one for a new
+// root if the root splits too.
 static size_t nodes_needed(const Path *path) {
     size_t needed = 0;
 
@@ -254,9 +241,8 @@ static size_t nodes_needed(const Path *path) {
     return needed + 1;
 }
 
-// Splits leaf, which has one entry too many, moving its second half
-// into right. right's first key becomes the separator above them, so
-// the caller copies it first.
+// right's first key becomes the separator above them, so the caller copies it
+// first.
 static void split_leaf(const BTree *tree, BTreeNode *leaf, BTreeNode *right) {
     size_t keep = (BTREE_ORDER + 1) / 2;
 
@@ -272,9 +258,7 @@ static void split_leaf(const BTree *tree, BTreeNode *leaf, BTreeNode *right) {
     leaf->next = right;
 }
 
-// Splits inner node, which has one separator too many, moving the
-// separators after the middle one, and their children, into right. The
-// middle separator is left past node's end, for the caller to move up.
+// Leaves the middle separator past node's end, for the caller to move up.
 static void split_inner(const BTree *tree, BTreeNode *node, BTreeNode *right) {
     size_t keep = (BTREE_ORDER + 1) / 2;
     size_t moved = node->count - keep - 1;
@@ -285,9 +269,8 @@ static void split_inner(const BTree *tree, BTreeNode *node, BTreeNode *right) {
     node->count = keep;
 }
 
-// The key that will start the right half if leaf splits after taking a
-// new entry at slot: the entry at position (BTREE_ORDER + 1) / 2 once the
-// new one is in.
+// The key that will start the right half if leaf splits after a new entry goes
+// in at slot.
 static const Value *split_key(const BTree *tree, const BTreeNode *leaf,
                               size_t slot, const Value *key) {
     size_t middle = (BTREE_ORDER + 1) / 2;
@@ -413,8 +396,8 @@ int btree_insert(BTree *tree, const Value *key, size_t row) {
 
 // ---- Removing ----
 
-// Moves the last entry of leaf's left neighbour into leaf. The
-// separator between them becomes a copy of that entry, already made.
+// The separator between them becomes separator, a copy of the moved entry's key
+// made beforehand.
 static void borrow_leaf_left(const BTree *tree, BTreeNode *parent,
                              size_t i, Value *separator) {
     BTreeNode *leaf = parent->children[i];
@@ -430,9 +413,8 @@ static void borrow_leaf_left(const BTree *tree, BTreeNode *parent,
     parent->rows[i - 1] = leaf->rows[0];
 }
 
-// Moves the first entry of leaf's right neighbour into leaf. The
-// separator between them becomes a copy of the right one's new first
-// entry, already made.
+// The separator between them becomes separator, a copy of the right one's new
+// first key made beforehand.
 static void borrow_leaf_right(const BTree *tree, BTreeNode *parent,
                               size_t i, Value *separator) {
     BTreeNode *leaf = parent->children[i];
@@ -477,9 +459,8 @@ static void borrow_inner_right(const BTree *tree, BTreeNode *parent,
     move_children(right, 0, right, 1, right->count + 1);
 }
 
-// Merges child i + 1 of parent into child i, and takes the separator
-// between them out of parent. An inner node takes that separator down
-// with it; a leaf's is freed, as its entries already hold the key.
+// Merges child i + 1 into child i. An inner node takes the separator between
+// them down with it; a leaf's is freed, as its entries hold the key already.
 static void merge_children(const BTree *tree, BTreeNode *parent, size_t i) {
     BTreeNode *left = parent->children[i];
     BTreeNode *right = parent->children[i + 1];
@@ -531,9 +512,9 @@ static LeafFix plan_leaf_fix(const Path *path) {
     return FIX_MERGE;
 }
 
-// Returns what to do instead of borrowing when the separator's copy
-// fails: merge with a neighbour if the two fit in one node, which an
-// emptied leaf always does, or else leave the leaf under half full.
+// Instead of borrowing, when the separator's copy fails: merge if the two fit
+// in one node, which an emptied leaf always does, or else leave the leaf under
+// half full.
 static LeafFix fallback_fix(const Path *path) {
     const BTreeNode *leaf = path->node[path->depth - 1];
     const BTreeNode *parent = path->node[path->depth - 2];
@@ -547,8 +528,7 @@ static LeafFix fallback_fix(const Path *path) {
     return FIX_NONE;
 }
 
-// Fixes the underfull inner nodes on path above the leaf, from the
-// bottom up, then shrinks the root if it's left with one child.
+// From the bottom up, then shrinks the root if it's left with one child.
 static void fix_inner(BTree *tree, const Path *path) {
     for (size_t d = path->depth - 1; d > 1; d--) {
         BTreeNode *node = path->node[d - 1];

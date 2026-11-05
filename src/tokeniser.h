@@ -82,9 +82,7 @@ typedef struct {
     int count;
 } TokenList;
 
-// Splits sql into tokens. On success, fills list (always ending in
-// TOKEN_EOF) and returns 1. On failure, writes a message to error and
-// returns 0; list must not be used.
+// list always ends in TOKEN_EOF. On failure, list mustn't be used.
 int tokenise(const char *sql, TokenList *list, char *error, size_t error_size);
 const char *token_type_name(TokenType type);
 

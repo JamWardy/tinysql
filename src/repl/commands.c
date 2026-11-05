@@ -10,9 +10,8 @@
 // needs, so a word cut short to fit is still too long to match one.
 #define MAX_WORD (MAX_TOKEN_LENGTH + 1)
 
-// Copies the next space-separated word of *s into word (size bytes) and
-// moves *s past it. Returns 0 if there's no word left. A word that
-// doesn't fit is cut short.
+// Moves *s past the word. One that doesn't fit is cut short; returns 0 if none
+// is left.
 static int next_word(const char **s, char *word, size_t size) {
     while (isspace((unsigned char)**s)) {
         (*s)++;
@@ -32,7 +31,7 @@ static int next_word(const char **s, char *word, size_t size) {
     return 1;
 }
 
-// .tables: the name of every table, in the order they were created.
+// .tables, in the order they were created.
 static void print_tables(const Database *db) {
     if (db->count == 0) {
         puts("(no tables)");
@@ -44,10 +43,8 @@ static void print_tables(const Database *db) {
     }
 }
 
-// Prints the CREATE TABLE statement that would make an empty copy of
-// table, e.g. CREATE TABLE users (id INT PRIMARY KEY, name TEXT NOT NULL);
-// A one-column key goes on its column, a longer one after the columns,
-// each in the order the table keeps them.
+// As the CREATE TABLE that would make an empty copy. A one-column key goes on
+// its column, a longer one after the columns.
 static void print_create(const Table *table) {
     const ColumnList *primary_key = NULL;
 
@@ -106,8 +103,6 @@ static void print_create(const Table *table) {
     puts(");");
 }
 
-// Prints a CREATE INDEX statement for each of table's indexes, e.g.
-// CREATE INDEX orders_item ON orders (item_id, expires_at);
 static void print_indexes(const Table *table) {
     for (size_t i = 0; i < table->index_count; i++) {
         const TreeIndex *index = &table->indexes[i];
@@ -121,8 +116,7 @@ static void print_indexes(const Table *table) {
     }
 }
 
-// .schema [table]: how every table, or just the one named, was created,
-// with its indexes.
+// .schema [table], with each table's indexes.
 static void print_schema(const Database *db, const char *name) {
     if (name) {
         const Table *table = database_find_table(db, name);

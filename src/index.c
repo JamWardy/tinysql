@@ -3,7 +3,7 @@
 #include <assert.h>
 #include <stdlib.h>
 
-// The size of a new index's array. Grows by doubling.
+// A new index's array size; it grows by doubling.
 #define MIN_CAPACITY 16
 
 void index_init(Index *index) {
@@ -23,7 +23,7 @@ static size_t home_slot(const Index *index, uint64_t hash) {
     return (size_t)(hash & (index->capacity - 1));
 }
 
-// The slot after slot. The mask wraps the last slot round to 0.
+// The mask wraps the last slot round to 0.
 static size_t next_slot(const Index *index, size_t slot) {
     return (slot + 1) & (index->capacity - 1);
 }
@@ -100,8 +100,7 @@ int index_find(const Index *index, uint64_t hash, IndexMatch matches,
     return 0;
 }
 
-// Returns 1 if slot is in the run from first to last, inclusive, going
-// forward and wrapping round the end of the array.
+// Going forward, wrapping round the end.
 static int in_run(size_t slot, size_t first, size_t last) {
     if (first <= last) {
         return first <= slot && slot <= last;

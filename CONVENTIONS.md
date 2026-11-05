@@ -23,8 +23,7 @@ functions we call, [GRAMMAR.md](GRAMMAR.md) for the SQL we accept, and
   `common_find_column`, `common_find_table`, `common_check_type`, `fail`
   and `copy_text` came about. Name the helper after what it means, not how it works.
 - **`static` unless another file needs it.** A public function goes in
-  the header with a comment saying what it does, what it returns and
-  what happens on failure.
+  the header.
 
 ## Errors
 
@@ -115,8 +114,11 @@ reasoning. In short:
 
 - 4 spaces, no tabs. Lines at most 80 characters. Braces on every `if`,
   `else`, `for` and `while`, even for one line.
-- `//` comments only, written as sentences. Comments say why, or what a
-  caller needs to know; the code says what.
+- `//` comments only, written as sentences. **Comment only what's worth
+  knowing and the code doesn't already say:** why, or something a caller
+  must know that the name and signature don't show, such as who frees
+  memory or what a failure leaves behind. No comment is better than one
+  that restates the code, so not every function needs one.
 - Functions and variables `snake_case`; types `PascalCase`; constants,
   macros and enum values `UPPER_CASE`, with a prefix per enum (`TYPE_`,
   `TOKEN_`, `CMP_`).

@@ -7,17 +7,15 @@
 #include "result.h"
 #include "table.h"
 
-// The values for a statement's `?`s, in order. Text is read, never kept.
+// One per `?`, in order. Text is read, never kept.
 typedef struct {
     const Value *values;  // May be NULL when count is 0.
     size_t count;
 } ParamList;
 
-// Runs stmt against db, filling result, which must be empty (as
-// result_init leaves it); the caller frees it with result_free. An
-// EXPLAIN fills result with the plans instead, and changes nothing.
-// Returns 1, or 0 with a message in error and result left empty. A
-// failed UPDATE may have changed some rows if memory ran out.
+// result must be empty, as result_init leaves it. An EXPLAIN fills it with the
+// plans instead, and changes nothing. On failure result is left empty, but an
+// UPDATE that ran out of memory may have changed some rows.
 int execute(Database *db, const Statement *stmt, const ParamList *params,
             Result *result, char *error, size_t error_size);
 

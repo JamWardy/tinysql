@@ -14,7 +14,6 @@ typedef struct {
 // direction is set here just before sorting.
 static int sort_descending;
 
-// Compares two SortRows.
 static int compare_rows(const void *a, const void *b) {
     const SortRow *x = a;
     const SortRow *y = b;
@@ -32,8 +31,7 @@ static int compare_rows(const void *a, const void *b) {
     return c;
 }
 
-// Sets *limit to the LIMIT, which a `?` may give. With no LIMIT it's set
-// to 0 and unused: select->has_limit says whether there is one.
+// With no LIMIT, *limit is 0 and unused.
 static int resolve_limit(const SelectStatement *select,
                          const ParamList *params, long long *limit,
                          char *error, size_t error_size) {
@@ -59,8 +57,8 @@ static int resolve_limit(const SelectStatement *select,
     return 1;
 }
 
-// Returns 1 if stmt's SELECT is over aggregates, giving one row for all
-// the rows it matches: if any item, or the ORDER BY, has one in it.
+// Whether an item, or the ORDER BY, has an aggregate, so the SELECT gives one
+// row for all it matches.
 static int is_aggregate_select(const Statement *stmt) {
     const SelectStatement *select = &stmt->as.select;
 
@@ -135,9 +133,8 @@ int select_append_row(const ExprContext *ctx, const SelectList *list,
     return 1;
 }
 
-// Sets *sorted to a new array of rows, sorted by the ORDER BY if there
-// is one, and *count to how many to keep for the LIMIT. The caller
-// frees *sorted.
+// Sorted by the ORDER BY if there is one; *count is how many to keep for the
+// LIMIT. The caller frees *sorted.
 static int sort_rows(const ExprContext *ctx, const SelectStatement *select,
                      long long limit, const RowList *rows,
                      SortRow **sorted, size_t *count,
@@ -174,8 +171,6 @@ static int sort_rows(const ExprContext *ctx, const SelectStatement *select,
     return 1;
 }
 
-// Fills result with a row per matched row, e.g. SELECT name, age * 2
-// FROM people WHERE age > 30 ORDER BY age.
 static int select_rows(const ExprContext *ctx, const SelectStatement *select,
                        long long limit, const RowList *rows, Result *result,
                        char *error, size_t error_size) {
@@ -198,9 +193,7 @@ static int select_rows(const ExprContext *ctx, const SelectStatement *select,
     return ok;
 }
 
-// Fills result with the one row of an aggregate SELECT over rows, e.g.
-// SELECT COUNT(*), MAX(age) - MIN(age) FROM people. ORDER BY has nothing
-// to sort, and LIMIT matters only when it's 0: then there's no row.
+// ORDER BY has nothing to sort, and LIMIT matters only when it's 0.
 static int select_aggregates(ExprContext *ctx, const SelectStatement *select,
                              long long limit, const RowList *rows,
                              Result *result, char *error, size_t error_size) {
