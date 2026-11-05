@@ -40,6 +40,7 @@ const char *error_sqlstate(ErrorCode code) {
         case ERROR_INVALID_ESCAPE:              return "22025";
         case ERROR_IDS_EXHAUSTED:               return "2200H";
         case ERROR_INVALID_TRANSACTION_STATE:   return "25000";
+        case ERROR_READ_ONLY:                   return "25006";
         case ERROR_IDLE_IN_TRANSACTION_TIMEOUT: return "25P03";
         case ERROR_PROTOCOL_VIOLATION:          return "08P01";
     }

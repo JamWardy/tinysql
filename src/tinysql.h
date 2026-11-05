@@ -51,4 +51,14 @@ int tinysql_run(Database *db, const char *path, const char *sql,
                 const Value *params, size_t param_count,
                 Result *result, Error *error);
 
+// As tinysql_run, but a statement that would change the database fails with
+// ERROR_READ_ONLY before it runs, as on a replica. Transactions are allowed.
+int tinysql_run_read_only(Database *db, const char *path, const char *sql,
+                          const Value *params, size_t param_count,
+                          Result *result, Error *error);
+
+// Whether a statement of this type may change the database. A Result's type
+// says what ran, with EXPLAIN as STMT_SELECT.
+int tinysql_changes_database(StatementType type);
+
 #endif

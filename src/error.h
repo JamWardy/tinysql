@@ -36,6 +36,7 @@ typedef enum {
     ERROR_INVALID_ESCAPE,
     ERROR_IDS_EXHAUSTED,
     ERROR_INVALID_TRANSACTION_STATE,
+    ERROR_READ_ONLY,                  // A change sent to a replica.
     ERROR_IDLE_IN_TRANSACTION_TIMEOUT,
     ERROR_PROTOCOL_VIOLATION,         // Including a wrong number of values.
 } ErrorCode;
