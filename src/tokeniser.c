@@ -172,17 +172,16 @@ static int add_token(
     TokenType type,
     const char *start,
     int length,
-    char *error,
-    size_t error_size
+    Error *error
 ) {
     // Keep the last slot free so there's always room for EOF.
     if (type != TOKEN_EOF && list->count >= MAX_TOKENS - 1) {
-        return fail(error, error_size,
+        return fail(error, ERROR_PROGRAM_LIMIT,
                     "too many tokens (max %d)", MAX_TOKENS - 1);
     }
 
     if (length >= MAX_TOKEN_LENGTH) {
-        return fail(error, error_size,
+        return fail(error, ERROR_PROGRAM_LIMIT,
                     "token too long (max %d characters): '%.20s...'",
                     MAX_TOKEN_LENGTH - 1, start);
     }
@@ -194,7 +193,7 @@ static int add_token(
     return 1;
 }
 
-int tokenise(const char *sql, TokenList *list, char *error, size_t error_size) {
+int tokenise(const char *sql, TokenList *list, Error *error) {
     int i = 0;
 
     list->count = 0;
@@ -215,8 +214,7 @@ int tokenise(const char *sql, TokenList *list, char *error, size_t error_size) {
             }
 
             TokenType type = lookup_keyword(sql + start, i - start);
-            if (!add_token(list, type, sql + start, i - start,
-                           error, error_size)) {
+            if (!add_token(list, type, sql + start, i - start, error)) {
                 return 0;
             }
             continue;
@@ -229,8 +227,7 @@ int tokenise(const char *sql, TokenList *list, char *error, size_t error_size) {
                 i++;
             }
 
-            if (!add_token(list, TOKEN_NUMBER, sql + start, i - start,
-                           error, error_size)) {
+            if (!add_token(list, TOKEN_NUMBER, sql + start, i - start, error)) {
                 return 0;
             }
             continue;
@@ -244,7 +241,7 @@ int tokenise(const char *sql, TokenList *list, char *error, size_t error_size) {
 
             while (1) {
                 if (sql[i] == '\0') {
-                    return fail(error, error_size, "unterminated string");
+                    return fail(error, ERROR_SYNTAX, "unterminated string");
                 }
                 if (sql[i] == '\'') {
                     if (sql[i + 1] != '\'') {
@@ -260,8 +257,7 @@ int tokenise(const char *sql, TokenList *list, char *error, size_t error_size) {
                 i++;
             }
 
-            if (!add_token(list, TOKEN_STRING, text, length,
-                           error, error_size)) {
+            if (!add_token(list, TOKEN_STRING, text, length, error)) {
                 return 0;
             }
             i++;  // Skip closing quote.
@@ -306,18 +302,18 @@ int tokenise(const char *sql, TokenList *list, char *error, size_t error_size) {
                 case '?': type = TOKEN_PARAM; break;
 
                 default:
-                    return fail(error, error_size,
+                    return fail(error, ERROR_SYNTAX,
                                 "unexpected character '%c'", sql[i]);
             }
         }
 
-        if (!add_token(list, type, sql + i, length, error, error_size)) {
+        if (!add_token(list, type, sql + i, length, error)) {
             return 0;
         }
         i += length;
     }
 
     // Can't fail: add_token always leaves room for EOF.
-    add_token(list, TOKEN_EOF, "", 0, error, error_size);
+    add_token(list, TOKEN_EOF, "", 0, error);
     return 1;
 }

@@ -19,10 +19,10 @@ void error_expected(Parser *p, const char *what) {
     const Token *token = peek(p);
 
     if (token->type == TOKEN_EOF) {
-        fail(p->error, sizeof(p->error),
+        fail(&p->error, ERROR_SYNTAX,
              "expected %s but reached end of input", what);
     } else {
-        fail(p->error, sizeof(p->error),
+        fail(&p->error, ERROR_SYNTAX,
              "expected %s but found '%s'", what, token->text);
     }
 }
@@ -159,7 +159,7 @@ int parse_value(Parser *p, Literal *out) {
         long long n = strtoll(text, NULL, 10);
 
         if (errno == ERANGE) {
-            return fail(p->error, sizeof(p->error),
+            return fail(&p->error, ERROR_NUMERIC_OUT_OF_RANGE,
                         "number out of range: %s", text);
         }
 

@@ -159,13 +159,12 @@ static ColumnStats *analyze_table(const Table *table) {
     return stats;
 }
 
-int execute_analyze(Database *db, const Statement *stmt,
-                    char *error, size_t error_size) {
+int execute_analyze(Database *db, const Statement *stmt, Error *error) {
     size_t first = 0;
     size_t last = db->count;
 
     if (stmt->table_name[0] != '\0') {
-        Table *table = resolve_table(db, stmt->table_name, error, error_size);
+        Table *table = resolve_table(db, stmt->table_name, error);
 
         if (!table) {
             return 0;
@@ -179,7 +178,7 @@ int execute_analyze(Database *db, const Statement *stmt,
     ColumnStats **built = malloc((last - first + 1) * sizeof(*built));
 
     if (!built) {
-        return fail(error, error_size, "out of memory");
+        return fail(error, ERROR_OUT_OF_MEMORY, "out of memory");
     }
     for (size_t t = first; t < last; t++) {
         built[t - first] = analyze_table(&db->tables[t]);
@@ -188,7 +187,7 @@ int execute_analyze(Database *db, const Statement *stmt,
                 stats_free(built[t - first], db->tables[t].column_count);
             }
             free(built);
-            return fail(error, error_size, "out of memory");
+            return fail(error, ERROR_OUT_OF_MEMORY, "out of memory");
         }
     }
     for (size_t t = first; t < last; t++) {

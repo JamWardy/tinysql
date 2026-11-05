@@ -18,7 +18,7 @@ int parse_select_list(Parser *p, SelectList *out) {
 
     do {
         if (out->item_count == MAX_COLUMNS) {
-            return fail(p->error, sizeof(p->error),
+            return fail(&p->error, ERROR_PROGRAM_LIMIT,
                         "too many columns (max %d)", MAX_COLUMNS);
         }
 
@@ -98,7 +98,7 @@ static int parse_limit(Parser *p, SelectStatement *select) {
     long long limit = strtoll(number->text, NULL, 10);
 
     if (errno == ERANGE) {
-        return fail(p->error, sizeof(p->error),
+        return fail(&p->error, ERROR_NUMERIC_OUT_OF_RANGE,
                     "number out of range: %s", number->text);
     }
 

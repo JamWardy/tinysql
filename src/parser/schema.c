@@ -9,14 +9,15 @@ static KeyDef *start_key(Parser *p, CreateStatement *create,
     if (kind == CONSTRAINT_PRIMARY_KEY) {
         for (int i = 0; i < create->key_count; i++) {
             if (create->keys[i].kind == CONSTRAINT_PRIMARY_KEY) {
-                fail(p->error, sizeof(p->error),
+                fail(&p->error, ERROR_INVALID_TABLE_DEFINITION,
                      "a table can have only one PRIMARY KEY");
                 return NULL;
             }
         }
     }
     if (create->key_count == MAX_KEYS) {
-        fail(p->error, sizeof(p->error), "too many keys (max %d)", MAX_KEYS);
+        fail(&p->error, ERROR_PROGRAM_LIMIT,
+             "too many keys (max %d)", MAX_KEYS);
         return NULL;
     }
 
@@ -28,7 +29,7 @@ static KeyDef *start_key(Parser *p, CreateStatement *create,
 
 static int add_key_column(Parser *p, KeyDef *key, const char *name) {
     if (key->column_count == MAX_COLUMNS) {
-        return fail(p->error, sizeof(p->error),
+        return fail(&p->error, ERROR_PROGRAM_LIMIT,
                     "too many %s columns (max %d)",
                     constraint_kind_name(key->kind), MAX_COLUMNS);
     }
@@ -51,7 +52,7 @@ static int add_column_key(Parser *p, CreateStatement *create,
 // column_constraint = NOT NULL | PRIMARY KEY | UNIQUE | AUTOINCREMENT
 static int parse_column_def(Parser *p, CreateStatement *create) {
     if (create->column_count == MAX_COLUMNS) {
-        return fail(p->error, sizeof(p->error),
+        return fail(&p->error, ERROR_PROGRAM_LIMIT,
                     "too many columns (max %d)", MAX_COLUMNS);
     }
 
@@ -90,7 +91,7 @@ static int parse_column_def(Parser *p, CreateStatement *create) {
             }
         } else if (match(p, TOKEN_AUTOINCREMENT)) {
             if (create->has_autoincrement) {
-                return fail(p->error, sizeof(p->error),
+                return fail(&p->error, ERROR_INVALID_TABLE_DEFINITION,
                             "a table can have only one AUTOINCREMENT");
             }
             create->has_autoincrement = 1;
@@ -161,7 +162,7 @@ static int parse_create_index(Parser *p, Statement *out) {
     index->column_count = 0;
     do {
         if (index->column_count == MAX_COLUMNS) {
-            return fail(p->error, sizeof(p->error),
+            return fail(&p->error, ERROR_PROGRAM_LIMIT,
                         "too many index columns (max %d)", MAX_COLUMNS);
         }
 
@@ -227,7 +228,7 @@ int parse_create(Parser *p, Statement *out) {
 
     // Only possible as `CREATE TABLE t (PRIMARY KEY (id))`, or UNIQUE.
     if (create->column_count == 0) {
-        return fail(p->error, sizeof(p->error),
+        return fail(&p->error, ERROR_SYNTAX,
                     "a table needs at least one column");
     }
 

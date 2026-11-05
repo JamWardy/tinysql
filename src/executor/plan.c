@@ -1,6 +1,6 @@
 #include "internal.h"
 
-#include "tinysql.h"  // For TINYSQL_MAX_ERROR.
+#include "error.h"
 
 // Planning: the ways a statement could find its rows, an estimate of
 // how many rows each would read, a cost for each, and the cheapest.
@@ -266,11 +266,10 @@ static const ColumnStats *column_stats(const ExprContext *ctx, size_t column) {
 static double comparison_selectivity(const ExprContext *ctx, size_t column,
                                      Operator op, int value_node) {
     const ColumnStats *stats = column_stats(ctx, column);
-    char error[TINYSQL_MAX_ERROR];
+    Error error;
     Value value;
 
-    if (!stats || !expr_evaluate(ctx, value_node, NULL, &value,
-                                 error, sizeof(error))) {
+    if (!stats || !expr_evaluate(ctx, value_node, NULL, &value, &error)) {
         return default_selectivity(op);
     }
     return value_selectivity(stats, op, &value);
@@ -287,10 +286,9 @@ static Value text_value(char *text) {
 // Sets *none if the pattern is NULL. Fails if it can't be worked out.
 static int plan_like_pattern(const ExprContext *ctx, int node,
                              LikePattern *pattern, int *none) {
-    char error[TINYSQL_MAX_ERROR];
+    Error error;
 
-    return expr_like_pattern(ctx, node, NULL, pattern, none,
-                             error, sizeof(error));
+    return expr_like_pattern(ctx, node, NULL, pattern, none, &error);
 }
 
 // Fraction of rows `column LIKE pattern` matches: the common values it

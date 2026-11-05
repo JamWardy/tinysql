@@ -41,7 +41,7 @@ int parse_update(Parser *p, Statement *out) {
 
     do {
         if (update->assignment_count == MAX_COLUMNS) {
-            return fail(p->error, sizeof(p->error),
+            return fail(&p->error, ERROR_PROGRAM_LIMIT,
                         "too many assignments (max %d)", MAX_COLUMNS);
         }
 

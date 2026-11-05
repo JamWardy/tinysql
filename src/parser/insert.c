@@ -25,7 +25,7 @@ int parse_insert(Parser *p, Statement *out) {
     if (match(p, TOKEN_LPAREN)) {
         do {
             if (insert->column_count == MAX_COLUMNS) {
-                return fail(p->error, sizeof(p->error),
+                return fail(&p->error, ERROR_PROGRAM_LIMIT,
                             "too many columns (max %d)", MAX_COLUMNS);
             }
 
@@ -52,7 +52,7 @@ int parse_insert(Parser *p, Statement *out) {
 
     do {
         if (insert->value_count == MAX_COLUMNS) {
-            return fail(p->error, sizeof(p->error),
+            return fail(&p->error, ERROR_PROGRAM_LIMIT,
                         "too many values (max %d)", MAX_COLUMNS);
         }
 
@@ -69,7 +69,7 @@ int parse_insert(Parser *p, Statement *out) {
 
     if (insert->column_count > 0 &&
         insert->column_count != insert->value_count) {
-        return fail(p->error, sizeof(p->error),
+        return fail(&p->error, ERROR_SYNTAX,
                     "%d columns were named but %d values were given",
                     insert->column_count, insert->value_count);
     }

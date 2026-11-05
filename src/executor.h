@@ -17,6 +17,6 @@ typedef struct {
 // plans instead, and changes nothing. On failure result is left empty, but an
 // UPDATE that ran out of memory may have changed some rows.
 int execute(Database *db, const Statement *stmt, const ParamList *params,
-            Result *result, char *error, size_t error_size);
+            Result *result, Error *error);
 
 #endif

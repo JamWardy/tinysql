@@ -8,15 +8,14 @@
 // A NULL filter matches every row. Otherwise a row matches when the
 // WHERE is true for it; false and NULL (unknown) leave it out.
 static int row_matches(const Row *row, const Filter *filter, int *matches,
-                       char *error, size_t error_size) {
+                       Error *error) {
     Value value;
 
     if (!filter) {
         *matches = 1;
         return 1;
     }
-    if (!expr_evaluate(filter->ctx, filter->root, row, &value,
-                       error, error_size)) {
+    if (!expr_evaluate(filter->ctx, filter->root, row, &value, error)) {
         return 0;
     }
     *matches = value.type == TYPE_BOOL && value.as.boolean;
@@ -24,14 +23,14 @@ static int row_matches(const Row *row, const Filter *filter, int *matches,
 }
 
 int where_resolve(ExprContext *ctx, int has_where, int root, Filter *filter,
-                  const Filter **out, char *error, size_t error_size) {
+                  const Filter **out, Error *error) {
     *out = NULL;
 
     if (!has_where) {
         return 1;
     }
 
-    if (!expr_resolve(ctx, root, EXPR_COLUMNS, "WHERE", error, error_size)) {
+    if (!expr_resolve(ctx, root, EXPR_COLUMNS, "WHERE", error)) {
         return 0;
     }
 
@@ -40,7 +39,8 @@ int where_resolve(ExprContext *ctx, int has_where, int root, Filter *filter,
     if (type != TYPE_BOOL && type != TYPE_NULL) {
         char text[64];
         expr_to_text(ctx->nodes, root, text, sizeof(text));
-        return fail(error, error_size, "WHERE needs a BOOL, but %s is %s",
+        return fail(error, ERROR_DATATYPE_MISMATCH,
+                    "WHERE needs a BOOL, but %s is %s",
                     text, data_type_name(type));
     }
 
@@ -125,8 +125,8 @@ static int before_range(const Plan *plan, const Value *key, const Value *probe,
 // e reads no columns, so there's no row to give it. Sets *none if it's NULL, as
 // then nothing can match.
 static int evaluate_bound(const Filter *filter, int node, Value *out,
-                          int *none, char *error, size_t error_size) {
-    if (!expr_evaluate(filter->ctx, node, NULL, out, error, error_size)) {
+                          int *none, Error *error) {
+    if (!expr_evaluate(filter->ctx, node, NULL, out, error)) {
         return 0;
     }
     if (out->type == TYPE_NULL) {
@@ -145,18 +145,17 @@ static Value text_value(char *text) {
 // The bounds from the prefix of the LIKE at node. Sets *none if its pattern
 // is NULL.
 static int find_like_bounds(const Filter *filter, int node, Bounds *out,
-                            int *none, char *error, size_t error_size) {
+                            int *none, Error *error) {
     LikePattern pattern;
 
-    if (!expr_like_pattern(filter->ctx, node, NULL, &pattern, none,
-                           error, error_size)) {
+    if (!expr_like_pattern(filter->ctx, node, NULL, &pattern, none, error)) {
         return 0;
     }
     if (*none) {
         return 1;
     }
     if (!like_range(&pattern, &out->like)) {
-        return fail(error, error_size, "out of memory");
+        return fail(error, ERROR_OUT_OF_MEMORY, "out of memory");
     }
     out->has_lower = 1;
     out->lower_inclusive = 1;
@@ -171,7 +170,7 @@ static int find_like_bounds(const Filter *filter, int node, Bounds *out,
 
 // Sets *none if a bound is NULL. Free out with free_bounds, even on failure.
 static int find_bounds(const Filter *filter, const Plan *plan, Bounds *out,
-                       int *none, char *error, size_t error_size) {
+                       int *none, Error *error) {
     const IndexableConditions *range = plan->range;
 
     out->has_lower = 0;
@@ -182,22 +181,19 @@ static int find_bounds(const Filter *filter, const Plan *plan, Bounds *out,
         return 1;
     }
     if (plan->like >= 0) {
-        return find_like_bounds(filter, plan->like, out, none,
-                                error, error_size);
+        return find_like_bounds(filter, plan->like, out, none, error);
     }
     if (range->lower >= 0) {
         out->has_lower = 1;
         out->lower_inclusive = range->lower_inclusive;
-        if (!evaluate_bound(filter, range->lower, &out->lower, none,
-                            error, error_size)) {
+        if (!evaluate_bound(filter, range->lower, &out->lower, none, error)) {
             return 0;
         }
     }
     if (range->upper >= 0) {
         out->has_upper = 1;
         out->upper_inclusive = range->upper_inclusive;
-        if (!evaluate_bound(filter, range->upper, &out->upper, none,
-                            error, error_size)) {
+        if (!evaluate_bound(filter, range->upper, &out->upper, none, error)) {
             return 0;
         }
     }
@@ -216,7 +212,7 @@ static void free_bounds(Bounds *bounds) {
 static int walk_index(const Table *table, const Filter *filter,
                       const Plan *plan, Value *probe, const Bounds *bounds,
                       int in_order, size_t stop_after, PositionList *out,
-                      char *error, size_t error_size) {
+                      Error *error) {
     const TreeIndex *index = plan->index;
     size_t k = plan->equal_count;
     BTreeCursor cursor;
@@ -250,8 +246,7 @@ static int walk_index(const Table *table, const Filter *filter,
                       : after_range(plan, key, probe, bounds)) {
             break;
         }
-        if (!row_matches(&table->rows[row], filter, &matches,
-                         error, error_size)) {
+        if (!row_matches(&table->rows[row], filter, &matches, error)) {
             return 0;
         }
         if (matches) {
@@ -279,7 +274,7 @@ static int collect_from_index(const Table *table, const Filter *filter,
                               const CandidatePlans *candidates,
                               const Plan *plan, int in_order,
                               size_t stop_after, PositionList *out,
-                              char *error, size_t error_size) {
+                              Error *error) {
     const TreeIndex *index = plan->index;
     Value probe[MAX_COLUMNS];
     Bounds bounds;
@@ -288,16 +283,14 @@ static int collect_from_index(const Table *table, const Filter *filter,
     for (size_t i = 0; i < plan->equal_count; i++) {
         int node = candidates->indexable[index->columns.positions[i]].equal;
 
-        if (!evaluate_bound(filter, node, &probe[i], &none,
-                            error, error_size)) {
+        if (!evaluate_bound(filter, node, &probe[i], &none, error)) {
             return 0;
         }
     }
 
-    int ok = find_bounds(filter, plan, &bounds, &none, error, error_size) &&
+    int ok = find_bounds(filter, plan, &bounds, &none, error) &&
              (none || walk_index(table, filter, plan, probe, &bounds,
-                                 in_order, stop_after, out,
-                                 error, error_size));
+                                 in_order, stop_after, out, error));
 
     free_bounds(&bounds);
     return ok;
@@ -306,8 +299,7 @@ static int collect_from_index(const Table *table, const Filter *filter,
 // A NULL finds nothing.
 static int find_by_key(const Table *table, const Filter *filter,
                        const CandidatePlans *candidates, const Plan *plan,
-                       size_t *row, int *found,
-                       char *error, size_t error_size) {
+                       size_t *row, int *found, Error *error) {
     const ColumnList *key = &plan->constraint->columns;
     Value values[MAX_COLUMNS];  // Laid out like a row; only the key's set.
 
@@ -316,7 +308,7 @@ static int find_by_key(const Table *table, const Filter *filter,
         int none = 0;
 
         if (!evaluate_bound(filter, candidates->indexable[column].equal,
-                            &values[column], &none, error, error_size)) {
+                            &values[column], &none, error)) {
             return 0;
         }
     }
@@ -330,7 +322,7 @@ static int find_by_key(const Table *table, const Filter *filter,
 // gives it, and then only up to its LIMIT; otherwise in table order.
 static int collect(const Table *table, const Filter *filter,
                    const RowOrder *order, PositionList *out, int *in_order,
-                   char *error, size_t error_size) {
+                   Error *error) {
     CandidatePlans candidates;
 
     choose_plan(table, filter, order, &candidates);
@@ -350,7 +342,7 @@ static int collect(const Table *table, const Filter *filter,
 
     // malloc(0) may return NULL, which isn't a failure.
     if (!out->positions && table->row_count > 0) {
-        return fail(error, error_size, "out of memory");
+        return fail(error, ERROR_OUT_OF_MEMORY, "out of memory");
     }
 
     switch (plan->kind) {
@@ -364,7 +356,7 @@ static int collect(const Table *table, const Filter *filter,
             int found;
 
             ok = find_by_key(table, filter, &candidates, plan, &r, &found,
-                             error, error_size);
+                             error);
             if (ok && found) {
                 out->positions[out->count++] = r;
             }
@@ -373,8 +365,7 @@ static int collect(const Table *table, const Filter *filter,
         case PLAN_INDEX:
             // It checks the WHERE as it walks, to stop early.
             if (!collect_from_index(table, filter, &candidates, plan,
-                                    *in_order, stop_after, out,
-                                    error, error_size)) {
+                                    *in_order, stop_after, out, error)) {
                 free(out->positions);
                 return 0;
             }
@@ -388,8 +379,7 @@ static int collect(const Table *table, const Filter *filter,
     for (size_t i = 0; i < out->count && ok; i++) {
         size_t r = out->positions[i];
 
-        ok = row_matches(&table->rows[r], filter, &matches,
-                         error, error_size);
+        ok = row_matches(&table->rows[r], filter, &matches, error);
         if (ok && matches) {
             out->positions[kept++] = r;
         }
@@ -404,26 +394,25 @@ static int collect(const Table *table, const Filter *filter,
 }
 
 int where_collect_positions(const Table *table, const Filter *filter,
-                            PositionList *out, char *error, size_t error_size) {
+                            PositionList *out, Error *error) {
     int in_order;
 
-    return collect(table, filter, NULL, out, &in_order, error, error_size);
+    return collect(table, filter, NULL, out, &in_order, error);
 }
 
 int where_collect_rows(const Table *table, const Filter *filter,
                        const RowOrder *order, RowList *out, int *in_order,
-                       char *error, size_t error_size) {
+                       Error *error) {
     PositionList matched;
 
-    if (!collect(table, filter, order, &matched, in_order,
-                 error, error_size)) {
+    if (!collect(table, filter, order, &matched, in_order, error)) {
         return 0;
     }
 
     out->rows = malloc(matched.count * sizeof(*out->rows));
     if (!out->rows && matched.count > 0) {
         free(matched.positions);
-        return fail(error, error_size, "out of memory");
+        return fail(error, ERROR_OUT_OF_MEMORY, "out of memory");
     }
 
     for (size_t i = 0; i < matched.count; i++) {

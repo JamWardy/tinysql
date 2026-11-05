@@ -7,9 +7,8 @@
 //             | update_stmt | drop_stmt | transaction_stmt | analyze_stmt
 //             | EXPLAIN ( select_stmt | update_stmt | delete_stmt ) )
 //             SEMICOLON EOF
-int parse(const TokenList *tokens, Statement *out,
-          char *error, size_t error_size) {
-    Parser p = { tokens, 0, 0, "", out };
+int parse(const TokenList *tokens, Statement *out, Error *error) {
+    Parser p = { tokens, 0, 0, { ERROR_INTERNAL, "" }, out };
     int ok;
 
     out->node_count = 0;
@@ -65,12 +64,12 @@ int parse(const TokenList *tokens, Statement *out,
     // Only these find rows, so only they have a plan to explain.
     if (ok && out->explain && out->type != STMT_SELECT &&
         out->type != STMT_UPDATE && out->type != STMT_DELETE) {
-        ok = fail(p.error, sizeof(p.error),
+        ok = fail(&p.error, ERROR_SYNTAX,
                   "EXPLAIN works on SELECT, UPDATE and DELETE");
     }
 
     if (!ok) {
-        copy_text(error, error_size, p.error);
+        *error = p.error;
         return 0;
     }
 

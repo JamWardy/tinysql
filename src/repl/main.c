@@ -6,15 +6,14 @@
 #include "tinysql.h"
 
 static void run_statement(Database *db, const char *path, const char *sql) {
-    char error[TINYSQL_MAX_ERROR];
+    Error error;
     Result result;
 
     result_init(&result);
 
     // The REPL has no way to give values, so a `?` is an error here.
-    if (!tinysql_run(db, path, sql, NULL, 0, &result,
-                     error, sizeof(error))) {
-        printf("Error: %s\n", error);
+    if (!tinysql_run(db, path, sql, NULL, 0, &result, &error)) {
+        printf("Error: %s\n", error.message);
         return;
     }
 
@@ -24,7 +23,7 @@ static void run_statement(Database *db, const char *path, const char *sql) {
 
 int main(int argc, char **argv) {
     char statement[MAX_STATEMENT];
-    char error[TINYSQL_MAX_ERROR];
+    Error error;
     Database db;
     const char *path = NULL;  // NULL: keep the database in memory only.
 
@@ -39,8 +38,9 @@ int main(int argc, char **argv) {
     // database would overwrite the file at the first change.
     if (argc == 2) {
         path = argv[1];
-        if (!database_load(&db, path, error, sizeof(error))) {
-            fprintf(stderr, "Error: cannot load '%s': %s\n", path, error);
+        if (!database_load(&db, path, &error)) {
+            fprintf(stderr, "Error: cannot load '%s': %s\n", path,
+                    error.message);
             return 1;
         }
     }

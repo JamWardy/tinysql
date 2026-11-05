@@ -65,7 +65,7 @@ static int is_comparison(Operator op) {
 
 // NULL fits anything. what names the operator or function for the message.
 static int check_operand(const ExprContext *ctx, int operand, DataType want,
-                         const char *what, char *error, size_t error_size) {
+                         const char *what, Error *error) {
     DataType type = ctx->types[operand];
 
     if (type == want || type == TYPE_NULL) {
@@ -74,26 +74,26 @@ static int check_operand(const ExprContext *ctx, int operand, DataType want,
 
     char text[MAX_EXPR_TEXT];
     expr_to_text(ctx->nodes, operand, text, sizeof(text));
-    return fail(error, error_size, "%s needs %s, but %s is %s", what,
+    return fail(error, ERROR_DATATYPE_MISMATCH,
+                "%s needs %s, but %s is %s", what,
                 data_type_name(want), text, data_type_name(type));
 }
 
 static int resolve_node(ExprContext *ctx, int node, int allowed,
-                        const char *place, char *error, size_t error_size);
+                        const char *place, Error *error);
 
 static int resolve_aggregate(ExprContext *ctx, int node, int allowed,
-                             const char *place,
-                             char *error, size_t error_size) {
+                             const char *place, Error *error) {
     const ExprNode *n = &ctx->nodes[node];
     AggregateFunc func = n->as.aggregate.func;
     int operand = n->as.aggregate.operand;
 
     if (allowed & EXPR_IN_AGGREGATE) {
-        return fail(error, error_size,
+        return fail(error, ERROR_GROUPING,
                     "can't use an aggregate inside another");
     }
     if (!(allowed & EXPR_AGGREGATES)) {
-        return fail(error, error_size, "can't use aggregates in %s", place);
+        return fail(error, ERROR_GROUPING, "can't use aggregates in %s", place);
     }
 
     // COUNT and SUM give an INT; MIN and MAX give their operand's type.
@@ -104,7 +104,7 @@ static int resolve_aggregate(ExprContext *ctx, int node, int allowed,
     }
 
     if (!resolve_node(ctx, operand, EXPR_COLUMNS | EXPR_IN_AGGREGATE, place,
-                      error, error_size)) {
+                      error)) {
         return 0;
     }
 
@@ -114,14 +114,13 @@ static int resolve_aggregate(ExprContext *ctx, int node, int allowed,
         case AGG_COUNT:
             return 1;
         case AGG_SUM:
-            return check_operand(ctx, operand, TYPE_INT, "SUM",
-                                 error, error_size);
+            return check_operand(ctx, operand, TYPE_INT, "SUM", error);
         case AGG_MIN:
         case AGG_MAX:
             if (type == TYPE_BOOL) {
                 char text[MAX_EXPR_TEXT];
                 expr_to_text(ctx->nodes, operand, text, sizeof(text));
-                return fail(error, error_size,
+                return fail(error, ERROR_DATATYPE_MISMATCH,
                             "%s needs INT or TEXT, but %s is BOOL",
                             aggregate_name(func), text);
             }
@@ -132,14 +131,14 @@ static int resolve_aggregate(ExprContext *ctx, int node, int allowed,
 }
 
 static int resolve_binary(ExprContext *ctx, int node, int allowed,
-                          const char *place, char *error, size_t error_size) {
+                          const char *place, Error *error) {
     const ExprNode *n = &ctx->nodes[node];
     Operator op = n->as.op.op;
     int left = n->as.op.left;
     int right = n->as.op.right;
 
-    if (!resolve_node(ctx, left, allowed, place, error, error_size) ||
-        !resolve_node(ctx, right, allowed, place, error, error_size)) {
+    if (!resolve_node(ctx, left, allowed, place, error) ||
+        !resolve_node(ctx, right, allowed, place, error)) {
         return 0;
     }
 
@@ -153,7 +152,8 @@ static int resolve_binary(ExprContext *ctx, int node, int allowed,
 
             expr_to_text(ctx->nodes, left, left_text, sizeof(left_text));
             expr_to_text(ctx->nodes, right, right_text, sizeof(right_text));
-            return fail(error, error_size, "can't compare %s (%s) with %s (%s)",
+            return fail(error, ERROR_DATATYPE_MISMATCH,
+                        "can't compare %s (%s) with %s (%s)",
                         left_text, data_type_name(a),
                         right_text, data_type_name(b));
         }
@@ -166,8 +166,8 @@ static int resolve_binary(ExprContext *ctx, int node, int allowed,
     char what[16];
 
     snprintf(what, sizeof(what), "'%s'", operator_name(op));
-    if (!check_operand(ctx, left, want, what, error, error_size) ||
-        !check_operand(ctx, right, want, what, error, error_size)) {
+    if (!check_operand(ctx, left, want, what, error) ||
+        !check_operand(ctx, right, want, what, error)) {
         return 0;
     }
 
@@ -177,7 +177,7 @@ static int resolve_binary(ExprContext *ctx, int node, int allowed,
 
 // The operand, pattern and escape are all TEXT.
 static int resolve_like(ExprContext *ctx, int node, int allowed,
-                        const char *place, char *error, size_t error_size) {
+                        const char *place, Error *error) {
     const ExprNode *n = &ctx->nodes[node];
     int parts[3] = { n->as.like.operand, n->as.like.pattern,
                      n->as.like.escape };
@@ -185,9 +185,9 @@ static int resolve_like(ExprContext *ctx, int node, int allowed,
 
     for (size_t i = 0; i < 3; i++) {
         if (parts[i] >= 0 &&
-            (!resolve_node(ctx, parts[i], allowed, place, error, error_size) ||
+            (!resolve_node(ctx, parts[i], allowed, place, error) ||
              !check_operand(ctx, parts[i], TYPE_TEXT, i == 2 ? "ESCAPE" : what,
-                            error, error_size))) {
+                            error))) {
             return 0;
         }
     }
@@ -197,7 +197,7 @@ static int resolve_like(ExprContext *ctx, int node, int allowed,
 
 // place names where the expression is, such as "WHERE", for messages.
 static int resolve_node(ExprContext *ctx, int node, int allowed,
-                        const char *place, char *error, size_t error_size) {
+                        const char *place, Error *error) {
     const ExprNode *n = &ctx->nodes[node];
 
     switch (n->kind) {
@@ -209,15 +209,15 @@ static int resolve_node(ExprContext *ctx, int node, int allowed,
         case EXPR_COLUMN:
             if (!(allowed & EXPR_COLUMNS)) {
                 if (allowed & EXPR_AGGREGATES) {
-                    return fail(error, error_size,
+                    return fail(error, ERROR_GROUPING,
                                 "can't mix columns and aggregates "
                                 "(there's no GROUP BY)");
                 }
-                return fail(error, error_size, "can't use column '%s' in %s",
+                return fail(error, ERROR_SYNTAX, "can't use column '%s' in %s",
                             n->as.column, place);
             }
             if (!resolve_column(ctx->table, n->as.column,
-                                &ctx->columns[node], error, error_size)) {
+                                &ctx->columns[node], error)) {
                 return 0;
             }
             ctx->types[node] = ctx->table->columns[ctx->columns[node]].type;
@@ -229,10 +229,8 @@ static int resolve_node(ExprContext *ctx, int node, int allowed,
             char what[16];
 
             snprintf(what, sizeof(what), "'%s'", operator_name(n->as.op.op));
-            if (!resolve_node(ctx, operand, allowed, place,
-                              error, error_size) ||
-                !check_operand(ctx, operand, want, what,
-                               error, error_size)) {
+            if (!resolve_node(ctx, operand, allowed, place, error) ||
+                !check_operand(ctx, operand, want, what, error)) {
                 return 0;
             }
             ctx->types[node] = want;
@@ -240,27 +238,25 @@ static int resolve_node(ExprContext *ctx, int node, int allowed,
         }
 
         case EXPR_BINARY:
-            return resolve_binary(ctx, node, allowed, place,
-                                  error, error_size);
+            return resolve_binary(ctx, node, allowed, place, error);
 
         case EXPR_IS_NULL:
             ctx->types[node] = TYPE_BOOL;
             return resolve_node(ctx, n->as.is_null.operand, allowed, place,
-                                error, error_size);
+                                error);
 
         case EXPR_LIKE:
-            return resolve_like(ctx, node, allowed, place, error, error_size);
+            return resolve_like(ctx, node, allowed, place, error);
 
         case EXPR_AGGREGATE:
-            return resolve_aggregate(ctx, node, allowed, place,
-                                     error, error_size);
+            return resolve_aggregate(ctx, node, allowed, place, error);
     }
     return 1;
 }
 
 int expr_resolve(ExprContext *ctx, int node, int allowed, const char *place,
-                 char *error, size_t error_size) {
-    return resolve_node(ctx, node, allowed, place, error, error_size);
+                 Error *error) {
+    return resolve_node(ctx, node, allowed, place, error);
 }
 
 int expr_has_aggregate(const ExprNode *nodes, int node) {
@@ -313,26 +309,26 @@ int expr_uses_columns(const ExprNode *nodes, int node) {
     return 0;
 }
 
-static int out_of_range(char *error, size_t error_size) {
-    return fail(error, error_size, "integer out of range");
+static int out_of_range(Error *error) {
+    return fail(error, ERROR_NUMERIC_OUT_OF_RANGE, "integer out of range");
 }
 
 // Sets *out to a op b, failing if the answer doesn't fit. Each check
 // comes before the sum or product: in C, overflowing a signed integer is
 // undefined behaviour, not a wrap-around.
 static int arithmetic(Operator op, long long a, long long b, long long *out,
-                      char *error, size_t error_size) {
+                      Error *error) {
     switch (op) {
         case OP_ADD:
             if ((b > 0 && a > LLONG_MAX - b) || (b < 0 && a < LLONG_MIN - b)) {
-                return out_of_range(error, error_size);
+                return out_of_range(error);
             }
             *out = a + b;
             return 1;
 
         case OP_SUBTRACT:
             if ((b < 0 && a > LLONG_MAX + b) || (b > 0 && a < LLONG_MIN + b)) {
-                return out_of_range(error, error_size);
+                return out_of_range(error);
             }
             *out = a - b;
             return 1;
@@ -341,7 +337,7 @@ static int arithmetic(Operator op, long long a, long long b, long long *out,
             if (a > 0 ? (b > 0 ? a > LLONG_MAX / b : b < LLONG_MIN / a)
                       : (b > 0 ? a < LLONG_MIN / b
                                : a != 0 && b < LLONG_MAX / a)) {
-                return out_of_range(error, error_size);
+                return out_of_range(error);
             }
             *out = a * b;
             return 1;
@@ -349,14 +345,14 @@ static int arithmetic(Operator op, long long a, long long b, long long *out,
         case OP_DIVIDE:
         case OP_REMAINDER:
             if (b == 0) {
-                return fail(error, error_size, "division by zero");
+                return fail(error, ERROR_DIVISION_BY_ZERO, "division by zero");
             }
             // The one quotient that doesn't fit: the most negative INT
             // has no positive counterpart. Its remainder is 0, but C
             // leaves that case undefined too.
             if (a == LLONG_MIN && b == -1) {
                 if (op == OP_DIVIDE) {
-                    return out_of_range(error, error_size);
+                    return out_of_range(error);
                 }
                 *out = 0;
                 return 1;
@@ -409,12 +405,12 @@ static int compare(Operator op, const Value *a, const Value *b) {
 // false, and true OR unknown is true, whatever the unknown turns out to
 // be. So the right side isn't evaluated when the left decides.
 static int logic(const ExprContext *ctx, const ExprNode *n, const Row *row,
-                 Value *out, char *error, size_t error_size) {
+                 Value *out, Error *error) {
     int decides = n->as.op.op == OP_OR;  // The value that decides alone.
     Value left;
     Value right;
 
-    if (!expr_evaluate(ctx, n->as.op.left, row, &left, error, error_size)) {
+    if (!expr_evaluate(ctx, n->as.op.left, row, &left, error)) {
         return 0;
     }
     if (left.type == TYPE_BOOL && left.as.boolean == decides) {
@@ -422,7 +418,7 @@ static int logic(const ExprContext *ctx, const ExprNode *n, const Row *row,
         return 1;
     }
 
-    if (!expr_evaluate(ctx, n->as.op.right, row, &right, error, error_size)) {
+    if (!expr_evaluate(ctx, n->as.op.right, row, &right, error)) {
         return 0;
     }
     if (right.type == TYPE_BOOL && right.as.boolean == decides) {
@@ -437,19 +433,18 @@ static int logic(const ExprContext *ctx, const ExprNode *n, const Row *row,
 }
 
 static int evaluate_binary(const ExprContext *ctx, const ExprNode *n,
-                           const Row *row, Value *out,
-                           char *error, size_t error_size) {
+                           const Row *row, Value *out, Error *error) {
     Operator op = n->as.op.op;
 
     if (op == OP_AND || op == OP_OR) {
-        return logic(ctx, n, row, out, error, error_size);
+        return logic(ctx, n, row, out, error);
     }
 
     Value left;
     Value right;
 
-    if (!expr_evaluate(ctx, n->as.op.left, row, &left, error, error_size) ||
-        !expr_evaluate(ctx, n->as.op.right, row, &right, error, error_size)) {
+    if (!expr_evaluate(ctx, n->as.op.left, row, &left, error) ||
+        !expr_evaluate(ctx, n->as.op.right, row, &right, error)) {
         return 0;
     }
 
@@ -464,8 +459,7 @@ static int evaluate_binary(const ExprContext *ctx, const ExprNode *n,
     }
 
     long long n_out;
-    if (!arithmetic(op, left.as.integer, right.as.integer, &n_out,
-                    error, error_size)) {
+    if (!arithmetic(op, left.as.integer, right.as.integer, &n_out, error)) {
         return 0;
     }
     *out = int_value(n_out);
@@ -473,8 +467,7 @@ static int evaluate_binary(const ExprContext *ctx, const ExprNode *n,
 }
 
 int expr_like_pattern(const ExprContext *ctx, int node, const Row *row,
-                      LikePattern *out, int *none,
-                      char *error, size_t error_size) {
+                      LikePattern *out, int *none, Error *error) {
     const ExprNode *n = &ctx->nodes[node];
     Value pattern;
     Value escape;
@@ -482,11 +475,9 @@ int expr_like_pattern(const ExprContext *ctx, int node, const Row *row,
     escape.type = TYPE_TEXT;
     escape.as.text = NULL;
     *none = 0;
-    if (!expr_evaluate(ctx, n->as.like.pattern, row, &pattern,
-                       error, error_size) ||
+    if (!expr_evaluate(ctx, n->as.like.pattern, row, &pattern, error) ||
         (n->as.like.escape >= 0 &&
-         !expr_evaluate(ctx, n->as.like.escape, row, &escape,
-                        error, error_size))) {
+         !expr_evaluate(ctx, n->as.like.escape, row, &escape, error))) {
         return 0;
     }
     if (pattern.type == TYPE_NULL || escape.type == TYPE_NULL) {
@@ -494,21 +485,18 @@ int expr_like_pattern(const ExprContext *ctx, int node, const Row *row,
         return 1;
     }
     return like_init(out, pattern.as.text, escape.as.text,
-                     n->as.like.ignore_case, error, error_size);
+                     n->as.like.ignore_case, error);
 }
 
 static int evaluate_like(const ExprContext *ctx, const ExprNode *n,
-                         const Row *row, Value *out,
-                         char *error, size_t error_size) {
+                         const Row *row, Value *out, Error *error) {
     int node = (int)(n - ctx->nodes);
     LikePattern pattern;
     Value operand;
     int none;
 
-    if (!expr_evaluate(ctx, n->as.like.operand, row, &operand,
-                       error, error_size) ||
-        !expr_like_pattern(ctx, node, row, &pattern, &none,
-                           error, error_size)) {
+    if (!expr_evaluate(ctx, n->as.like.operand, row, &operand, error) ||
+        !expr_like_pattern(ctx, node, row, &pattern, &none, error)) {
         return 0;
     }
     if (none || operand.type == TYPE_NULL) {
@@ -521,7 +509,7 @@ static int evaluate_like(const ExprContext *ctx, const ExprNode *n,
 }
 
 int expr_evaluate(const ExprContext *ctx, int node, const Row *row,
-                  Value *out, char *error, size_t error_size) {
+                  Value *out, Error *error) {
     const ExprNode *n = &ctx->nodes[node];
 
     switch (n->kind) {
@@ -541,7 +529,7 @@ int expr_evaluate(const ExprContext *ctx, int node, const Row *row,
             Value operand;
 
             if (!expr_evaluate(ctx, n->as.is_null.operand, row, &operand,
-                               error, error_size)) {
+                               error)) {
                 return 0;
             }
             *out = bool_value((operand.type == TYPE_NULL) !=
@@ -552,8 +540,7 @@ int expr_evaluate(const ExprContext *ctx, int node, const Row *row,
         case EXPR_UNARY: {
             Value operand;
 
-            if (!expr_evaluate(ctx, n->as.op.left, row, &operand,
-                               error, error_size)) {
+            if (!expr_evaluate(ctx, n->as.op.left, row, &operand, error)) {
                 return 0;
             }
             if (operand.type == TYPE_NULL) {
@@ -561,7 +548,7 @@ int expr_evaluate(const ExprContext *ctx, int node, const Row *row,
             } else if (n->as.op.op == OP_NOT) {
                 *out = bool_value(!operand.as.boolean);
             } else if (operand.as.integer == LLONG_MIN) {
-                return out_of_range(error, error_size);
+                return out_of_range(error);
             } else {
                 *out = int_value(-operand.as.integer);
             }
@@ -569,10 +556,10 @@ int expr_evaluate(const ExprContext *ctx, int node, const Row *row,
         }
 
         case EXPR_BINARY:
-            return evaluate_binary(ctx, n, row, out, error, error_size);
+            return evaluate_binary(ctx, n, row, out, error);
 
         case EXPR_LIKE:
-            return evaluate_like(ctx, n, row, out, error, error_size);
+            return evaluate_like(ctx, n, row, out, error);
     }
     return 1;
 }
@@ -583,8 +570,7 @@ int expr_evaluate(const ExprContext *ctx, int node, const Row *row,
 // there's no other value: no rows, or only NULLs. Text in *out points
 // into a row or the statement.
 static int compute_aggregate(const ExprContext *ctx, int node,
-                             const RowList *rows, Value *out,
-                             char *error, size_t error_size) {
+                             const RowList *rows, Value *out, Error *error) {
     const ExprNode *n = &ctx->nodes[node];
     AggregateFunc func = n->as.aggregate.func;
     int operand = n->as.aggregate.operand;
@@ -600,8 +586,7 @@ static int compute_aggregate(const ExprContext *ctx, int node,
     for (size_t r = 0; r < rows->count; r++) {
         Value value;
 
-        if (!expr_evaluate(ctx, operand, rows->rows[r], &value,
-                           error, error_size)) {
+        if (!expr_evaluate(ctx, operand, rows->rows[r], &value, error)) {
             return 0;
         }
         if (value.type == TYPE_NULL) {
@@ -618,7 +603,7 @@ static int compute_aggregate(const ExprContext *ctx, int node,
         switch (func) {
             case AGG_SUM:
                 if (!arithmetic(OP_ADD, out->as.integer, value.as.integer,
-                                &out->as.integer, error, error_size)) {
+                                &out->as.integer, error)) {
                     return 0;
                 }
                 break;
@@ -644,7 +629,7 @@ static int compute_aggregate(const ExprContext *ctx, int node,
 }
 
 int expr_compute_aggregates(ExprContext *ctx, int node, const RowList *rows,
-                            char *error, size_t error_size) {
+                            Error *error) {
     const ExprNode *n = &ctx->nodes[node];
 
     switch (n->kind) {
@@ -652,27 +637,24 @@ int expr_compute_aggregates(ExprContext *ctx, int node, const RowList *rows,
         case EXPR_COLUMN:
             return 1;
         case EXPR_UNARY:
-            return expr_compute_aggregates(ctx, n->as.op.left, rows,
-                                           error, error_size);
+            return expr_compute_aggregates(ctx, n->as.op.left, rows, error);
         case EXPR_BINARY:
-            return expr_compute_aggregates(ctx, n->as.op.left, rows,
-                                           error, error_size) &&
-                   expr_compute_aggregates(ctx, n->as.op.right, rows,
-                                           error, error_size);
+            return expr_compute_aggregates(ctx, n->as.op.left, rows, error) &&
+                   expr_compute_aggregates(ctx, n->as.op.right, rows, error);
         case EXPR_IS_NULL:
             return expr_compute_aggregates(ctx, n->as.is_null.operand, rows,
-                                           error, error_size);
+                                           error);
         case EXPR_LIKE:
             return expr_compute_aggregates(ctx, n->as.like.operand, rows,
-                                           error, error_size) &&
+                                           error) &&
                    expr_compute_aggregates(ctx, n->as.like.pattern, rows,
-                                           error, error_size) &&
+                                           error) &&
                    (n->as.like.escape < 0 ||
                     expr_compute_aggregates(ctx, n->as.like.escape, rows,
-                                            error, error_size));
+                                            error));
         case EXPR_AGGREGATE:
             return compute_aggregate(ctx, node, rows, &ctx->aggregates[node],
-                                     error, error_size);
+                                     error);
     }
     return 1;
 }

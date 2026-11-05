@@ -16,7 +16,7 @@ int new_node(Parser *p, ExprKind kind, int *out) {
     Statement *stmt = p->stmt;
 
     if (stmt->node_count == MAX_NODES) {
-        return fail(p->error, sizeof(p->error),
+        return fail(&p->error, ERROR_PROGRAM_LIMIT,
                     "statement is too complex (max %d expression nodes)",
                     MAX_NODES);
     }
@@ -284,7 +284,7 @@ static int parse_comparison(Parser *p, int *out) {
     // In SQL, `age = NULL` matches no row, not even one whose age is
     // NULL. That's a common mistake, so it's an error here instead.
     if (is_null_literal(p, *out) || is_null_literal(p, right)) {
-        return fail(p->error, sizeof(p->error),
+        return fail(&p->error, ERROR_SYNTAX,
                     "use IS NULL or IS NOT NULL to test for NULL");
     }
 

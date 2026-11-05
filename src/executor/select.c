@@ -34,7 +34,7 @@ static int compare_rows(const void *a, const void *b) {
 // With no LIMIT, *limit is 0 and unused.
 static int resolve_limit(const SelectStatement *select,
                          const ParamList *params, long long *limit,
-                         char *error, size_t error_size) {
+                         Error *error) {
     *limit = 0;
 
     if (!select->has_limit) {
@@ -44,12 +44,12 @@ static int resolve_limit(const SelectStatement *select,
     Value value = literal_to_value(&select->limit, params);
 
     if (value.type != TYPE_INT) {
-        return fail(error, error_size,
+        return fail(error, ERROR_DATATYPE_MISMATCH,
                     "LIMIT needs an INT but the value is %s",
                     data_type_name(value.type));
     }
     if (value.as.integer < 0) {
-        return fail(error, error_size, "LIMIT can't be negative: %lld",
+        return fail(error, ERROR_INVALID_LIMIT, "LIMIT can't be negative: %lld",
                     value.as.integer);
     }
 
@@ -70,8 +70,7 @@ int is_aggregate_select(const Statement *stmt) {
 }
 
 int find_row_order(const ExprContext *ctx, const Statement *stmt,
-                   const ParamList *params, RowOrder *out,
-                   char *error, size_t error_size) {
+                   const ParamList *params, RowOrder *out, Error *error) {
     const SelectStatement *select = &stmt->as.select;
     int aggregate = is_aggregate_select(stmt);
 
@@ -86,15 +85,13 @@ int find_row_order(const ExprContext *ctx, const Statement *stmt,
     }
     out->descending = select->descending;
     out->has_limit = select->has_limit;
-    return resolve_limit(select, params, &out->limit, error, error_size);
+    return resolve_limit(select, params, &out->limit, error);
 }
 
 int select_resolve_list(ExprContext *ctx, const SelectList *list,
-                        int allowed, const char *place,
-                        char *error, size_t error_size) {
+                        int allowed, const char *place, Error *error) {
     for (int i = 0; i < list->item_count; i++) {
-        if (!expr_resolve(ctx, list->items[i].expr, allowed, place,
-                          error, error_size)) {
+        if (!expr_resolve(ctx, list->items[i].expr, allowed, place, error)) {
             return 0;
         }
     }
@@ -129,8 +126,7 @@ void select_add_columns(const ExprContext *ctx, const SelectList *list,
 }
 
 int select_append_row(const ExprContext *ctx, const SelectList *list,
-                      const Row *row, Result *result,
-                      char *error, size_t error_size) {
+                      const Row *row, Result *result, Error *error) {
     Value values[MAX_COLUMNS];  // Borrowed from the row or the statement.
     const Value *row_values = values;
 
@@ -139,14 +135,13 @@ int select_append_row(const ExprContext *ctx, const SelectList *list,
     }
 
     for (int i = 0; i < list->item_count; i++) {
-        if (!expr_evaluate(ctx, list->items[i].expr, row, &values[i],
-                           error, error_size)) {
+        if (!expr_evaluate(ctx, list->items[i].expr, row, &values[i], error)) {
             return 0;
         }
     }
 
     if (!result_append_row(result, row_values)) {
-        return fail(error, error_size, "out of memory");
+        return fail(error, ERROR_OUT_OF_MEMORY, "out of memory");
     }
     return 1;
 }
@@ -155,14 +150,13 @@ int select_append_row(const ExprContext *ctx, const SelectList *list,
 // LIMIT. The caller frees *sorted.
 static int sort_rows(const ExprContext *ctx, const SelectStatement *select,
                      long long limit, int in_order, const RowList *rows,
-                     SortRow **sorted, size_t *count,
-                     char *error, size_t error_size) {
+                     SortRow **sorted, size_t *count, Error *error) {
     *sorted = malloc(rows->count * sizeof(**sorted));
     *count = rows->count;
 
     // malloc(0) may return NULL, which isn't a failure.
     if (!*sorted && rows->count > 0) {
-        return fail(error, error_size, "out of memory");
+        return fail(error, ERROR_OUT_OF_MEMORY, "out of memory");
     }
 
     for (size_t r = 0; r < rows->count; r++) {
@@ -170,7 +164,7 @@ static int sort_rows(const ExprContext *ctx, const SelectStatement *select,
 
         if (select->has_order &&
             !expr_evaluate(ctx, select->order_by, rows->rows[r],
-                           &(*sorted)[r].key, error, error_size)) {
+                           &(*sorted)[r].key, error)) {
             free(*sorted);
             return 0;
         }
@@ -191,12 +185,12 @@ static int sort_rows(const ExprContext *ctx, const SelectStatement *select,
 
 static int select_rows(const ExprContext *ctx, const SelectStatement *select,
                        long long limit, int in_order, const RowList *rows,
-                       Result *result, char *error, size_t error_size) {
+                       Result *result, Error *error) {
     SortRow *sorted;
     size_t count;
 
     if (!sort_rows(ctx, select, limit, in_order, rows, &sorted, &count,
-                   error, error_size)) {
+                   error)) {
         return 0;
     }
 
@@ -204,7 +198,7 @@ static int select_rows(const ExprContext *ctx, const SelectStatement *select,
 
     for (size_t r = 0; r < count && ok; r++) {
         ok = select_append_row(ctx, &select->list, sorted[r].row, result,
-                               error, error_size);
+                               error);
     }
 
     free(sorted);
@@ -214,10 +208,10 @@ static int select_rows(const ExprContext *ctx, const SelectStatement *select,
 // ORDER BY has nothing to sort, and LIMIT matters only when it's 0.
 static int select_aggregates(ExprContext *ctx, const SelectStatement *select,
                              long long limit, const RowList *rows,
-                             Result *result, char *error, size_t error_size) {
+                             Result *result, Error *error) {
     for (int i = 0; i < select->list.item_count; i++) {
         if (!expr_compute_aggregates(ctx, select->list.items[i].expr, rows,
-                                     error, error_size)) {
+                                     error)) {
             return 0;
         }
     }
@@ -225,16 +219,13 @@ static int select_aggregates(ExprContext *ctx, const SelectStatement *select,
     if (select->has_limit && limit == 0) {
         return 1;
     }
-    return select_append_row(ctx, &select->list, NULL, result,
-                             error, error_size);
+    return select_append_row(ctx, &select->list, NULL, result, error);
 }
 
 int execute_select(Database *db, const Statement *stmt,
-                   const ParamList *params, Result *result,
-                   char *error, size_t error_size) {
+                   const ParamList *params, Result *result, Error *error) {
     const SelectStatement *select = &stmt->as.select;
-    const Table *table = resolve_table(db, stmt->table_name,
-                                       error, error_size);
+    const Table *table = resolve_table(db, stmt->table_name, error);
 
     if (!table) {
         return 0;
@@ -253,27 +244,25 @@ int execute_select(Database *db, const Statement *stmt,
     expr_init(&ctx, stmt, table, params);
 
     if (aggregate && select->list.select_all) {
-        return fail(error, error_size,
+        return fail(error, ERROR_GROUPING,
                     "can't mix columns and aggregates (there's no GROUP BY)");
     }
 
     // An aggregate gives no table rows to lock.
     if (aggregate && select->for_update) {
-        return fail(error, error_size,
+        return fail(error, ERROR_FEATURE_NOT_SUPPORTED,
                     "FOR UPDATE is not allowed with aggregates");
     }
 
-    if (!select_resolve_list(&ctx, &select->list, allowed, "SELECT",
-                             error, error_size)) {
+    if (!select_resolve_list(&ctx, &select->list, allowed, "SELECT", error)) {
         return 0;
     }
 
     if (!where_resolve(&ctx, select->has_where, select->where,
-                       &filter, &where, error, error_size) ||
+                       &filter, &where, error) ||
         (select->has_order &&
-         !expr_resolve(&ctx, select->order_by, allowed, "ORDER BY",
-                       error, error_size)) ||
-        !find_row_order(&ctx, stmt, params, &order, error, error_size)) {
+         !expr_resolve(&ctx, select->order_by, allowed, "ORDER BY", error)) ||
+        !find_row_order(&ctx, stmt, params, &order, error)) {
         return 0;
     }
 
@@ -281,8 +270,7 @@ int execute_select(Database *db, const Statement *stmt,
     int in_order;
     long long limit = order.limit;
 
-    if (!where_collect_rows(table, where, &order, &matched, &in_order,
-                            error, error_size)) {
+    if (!where_collect_rows(table, where, &order, &matched, &in_order, error)) {
         return 0;
     }
 
@@ -290,9 +278,9 @@ int execute_select(Database *db, const Statement *stmt,
 
     int ok = aggregate
                  ? select_aggregates(&ctx, select, limit, &matched, result,
-                                     error, error_size)
+                                     error)
                  : select_rows(&ctx, select, limit, in_order, &matched,
-                               result, error, error_size);
+                               result, error);
     free(matched.rows);
     return ok;
 }

@@ -67,45 +67,34 @@ typedef struct {
 // Statements, one per file; execute() picks one by the statement's type.
 
 // schema.c: CREATE and DROP, of tables and indexes.
-int execute_create(Database *db, const Statement *stmt,
-                   char *error, size_t error_size);
-int execute_drop(Database *db, const Statement *stmt,
-                 char *error, size_t error_size);
-int execute_create_index(Database *db, const Statement *stmt,
-                         char *error, size_t error_size);
-int execute_drop_index(Database *db, const Statement *stmt,
-                       char *error, size_t error_size);
+int execute_create(Database *db, const Statement *stmt, Error *error);
+int execute_drop(Database *db, const Statement *stmt, Error *error);
+int execute_create_index(Database *db, const Statement *stmt, Error *error);
+int execute_drop_index(Database *db, const Statement *stmt, Error *error);
 
 // analyze.c: statistics for one table, or every table.
-int execute_analyze(Database *db, const Statement *stmt,
-                    char *error, size_t error_size);
+int execute_analyze(Database *db, const Statement *stmt, Error *error);
 
 // explain.c: for EXPLAIN, fills result with a row per plan considered.
 int execute_explain(Database *db, const Statement *stmt,
-                    const ParamList *params, Result *result,
-                    char *error, size_t error_size);
+                    const ParamList *params, Result *result, Error *error);
 
 // insert.c, select.c, delete.c and update.c fill result, and read any
 // `?`s' values from params.
 int execute_insert(Database *db, const Statement *stmt,
-                   const ParamList *params, Result *result,
-                   char *error, size_t error_size);
+                   const ParamList *params, Result *result, Error *error);
 int execute_select(Database *db, const Statement *stmt,
-                   const ParamList *params, Result *result,
-                   char *error, size_t error_size);
+                   const ParamList *params, Result *result, Error *error);
 int execute_delete(Database *db, const Statement *stmt,
-                   const ParamList *params, Result *result,
-                   char *error, size_t error_size);
+                   const ParamList *params, Result *result, Error *error);
 int execute_update(Database *db, const Statement *stmt,
-                   const ParamList *params, Result *result,
-                   char *error, size_t error_size);
+                   const ParamList *params, Result *result, Error *error);
 
 // select.c: a SELECT list, which INSERT's RETURNING shares.
 
 // place names the list in messages, such as "RETURNING".
 int select_resolve_list(ExprContext *ctx, const SelectList *list,
-                        int allowed, const char *place,
-                        char *error, size_t error_size);
+                        int allowed, const char *place, Error *error);
 
 // A column per item, or per table column for `*`. An item is headed by its AS
 // name, its column's name, or else its expression rebuilt as text.
@@ -115,8 +104,7 @@ void select_add_columns(const ExprContext *ctx, const SelectList *list,
 // row is NULL for an aggregate SELECT, whose items read only the aggregates
 // already worked out.
 int select_append_row(const ExprContext *ctx, const SelectList *list,
-                      const Row *row, Result *result,
-                      char *error, size_t error_size);
+                      const Row *row, Result *result, Error *error);
 
 // Whether an item, or the ORDER BY, has an aggregate, so the SELECT gives one
 // row for all it matches.
@@ -125,26 +113,23 @@ int is_aggregate_select(const Statement *stmt);
 // The order stmt's SELECT wants, its ORDER BY already resolved in ctx; an
 // aggregate SELECT's is none. Fails on a bad LIMIT.
 int find_row_order(const ExprContext *ctx, const Statement *stmt,
-                   const ParamList *params, RowOrder *out,
-                   char *error, size_t error_size);
+                   const ParamList *params, RowOrder *out, Error *error);
 
 // common.c: lookups and checks most statements need.
 
-Table *resolve_table(const Database *db, const char *name,
-                     char *error, size_t error_size);
+Table *resolve_table(const Database *db, const char *name, Error *error);
 
 // NULL can go in any column. what names the value in the message, e.g. "WHERE
 // value".
 int check_type(const Column *column, DataType given, const char *what,
-               char *error, size_t error_size);
+               Error *error);
 
 // As check_type, but also refuses NULL in a NOT NULL column, for INSERT
 // and UPDATE. A WHERE uses check_type, as IS NULL is fine on any column.
-int check_value(const Column *column, DataType given,
-                char *error, size_t error_size);
+int check_value(const Column *column, DataType given, Error *error);
 
 int resolve_column(const Table *table, const char *name, size_t *index,
-                   char *error, size_t error_size);
+                   Error *error);
 
 // Its own, or for a `?` its parameter's.
 DataType literal_type(const Literal *lit, const ParamList *params);
@@ -156,7 +141,7 @@ Value literal_to_value(const Literal *lit, const ParamList *params);
 // e.g. "duplicate primary key in table 'users': id = 5". values is laid out
 // like a row.
 int fail_duplicate(const Table *table, const Constraint *constraint,
-                   const Value *values, char *error, size_t error_size);
+                   const Value *values, Error *error);
 
 // expr.c: checking and evaluating expressions.
 
@@ -168,23 +153,22 @@ void expr_init(ExprContext *ctx, const Statement *stmt, const Table *table,
 // it needs, filling in ctx->types[node]. allowed holds EXPR_ flags; place names
 // where the expression is, such as "VALUES", for messages.
 int expr_resolve(ExprContext *ctx, int node, int allowed, const char *place,
-                 char *error, size_t error_size);
+                 Error *error);
 
 // row may be NULL if the expression reads no columns. Fails on overflow or
 // division by zero. Text in *out points into row, the statement or a parameter,
 // so read it straight away.
 int expr_evaluate(const ExprContext *ctx, int node, const Row *row,
-                  Value *out, char *error, size_t error_size);
+                  Value *out, Error *error);
 
 // The pattern of the EXPR_LIKE at node, with its escape, for row. Sets *none
 // if either is NULL, so nothing matches. Fails on a bad escape or pattern.
 int expr_like_pattern(const ExprContext *ctx, int node, const Row *row,
-                      LikePattern *out, int *none,
-                      char *error, size_t error_size);
+                      LikePattern *out, int *none, Error *error);
 
 // For expr_evaluate to read afterwards.
 int expr_compute_aggregates(ExprContext *ctx, int node, const RowList *rows,
-                            char *error, size_t error_size);
+                            Error *error);
 
 int expr_has_aggregate(const ExprNode *nodes, int node);
 
@@ -256,16 +240,16 @@ void choose_plan(const Table *table, const Filter *filter,
 // columns and types before any row is read, so a mistake is found even where no
 // row would reach it. ctx must outlive filter.
 int where_resolve(ExprContext *ctx, int has_where, int root, Filter *filter,
-                  const Filter **out, char *error, size_t error_size);
+                  const Filter **out, Error *error);
 
 // In table order, by the plan choose_plan picks.
 int where_collect_positions(const Table *table, const Filter *filter,
-                            PositionList *out, char *error, size_t error_size);
+                            PositionList *out, Error *error);
 
 // out->rows is a new array, which the caller frees. With an order, sets
 // *in_order to whether the rows came in it, and stops at its LIMIT if so.
 int where_collect_rows(const Table *table, const Filter *filter,
                        const RowOrder *order, RowList *out, int *in_order,
-                       char *error, size_t error_size);
+                       Error *error);
 
 #endif

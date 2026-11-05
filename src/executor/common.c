@@ -6,39 +6,39 @@
 
 #include "error.h"
 
-Table *resolve_table(const Database *db, const char *name,
-                     char *error, size_t error_size) {
+Table *resolve_table(const Database *db, const char *name, Error *error) {
     Table *table = database_lookup_table(db, name);
 
     if (!table) {
-        fail(error, error_size, "no such table '%s'", name);
+        fail(error, ERROR_UNDEFINED_TABLE, "no such table '%s'", name);
     }
     return table;
 }
 
 int check_type(const Column *column, DataType given, const char *what,
-               char *error, size_t error_size) {
+               Error *error) {
     if (given != TYPE_NULL && given != column->type) {
-        return fail(error, error_size, "column '%s' is %s but the %s is %s",
+        return fail(error, ERROR_DATATYPE_MISMATCH,
+                    "column '%s' is %s but the %s is %s",
              column->name, data_type_name(column->type), what,
              data_type_name(given));
     }
     return 1;
 }
 
-int check_value(const Column *column, DataType given,
-                char *error, size_t error_size) {
+int check_value(const Column *column, DataType given, Error *error) {
     if (given == TYPE_NULL && column->not_null) {
-        return fail(error, error_size, "column '%s' can't be NULL",
+        return fail(error, ERROR_NOT_NULL_VIOLATION,
+                    "column '%s' can't be NULL",
              column->name);
     }
-    return check_type(column, given, "value", error, error_size);
+    return check_type(column, given, "value", error);
 }
 
 int resolve_column(const Table *table, const char *name, size_t *index,
-                   char *error, size_t error_size) {
+                   Error *error) {
     if (!table_lookup_column(table, name, index)) {
-        return fail(error, error_size, "no such column '%s'", name);
+        return fail(error, ERROR_UNDEFINED_COLUMN, "no such column '%s'", name);
     }
     return 1;
 }
@@ -86,7 +86,7 @@ static const char *constraint_name(ConstraintKind kind) {
 }
 
 int fail_duplicate(const Table *table, const Constraint *constraint,
-                   const Value *values, char *error, size_t error_size) {
+                   const Value *values, Error *error) {
     const ColumnList *key = &constraint->columns;
     char text[256];  // Cut short if it's long; it's only for the message.
     size_t length = 0;
@@ -112,6 +112,6 @@ int fail_duplicate(const Table *table, const Constraint *constraint,
         length += written > 0 ? (size_t)written : 0;
     }
 
-    return fail(error, error_size, "duplicate %s in table '%s': %s",
+    return fail(error, ERROR_UNIQUE_VIOLATION, "duplicate %s in table '%s': %s",
                 constraint_name(constraint->kind), table->name, text);
 }

@@ -6,8 +6,7 @@
 
 // If the table has an AUTOINCREMENT column and values leaves it NULL,
 // sets it to the ID after the highest the table has had.
-static int choose_id(const Table *table, Value *values,
-                     char *error, size_t error_size) {
+static int choose_id(const Table *table, Value *values, Error *error) {
     size_t c;
 
     if (!table_autoincrement_column(table, &c) ||
@@ -15,7 +14,7 @@ static int choose_id(const Table *table, Value *values,
         return 1;
     }
     if (table->last_id == LLONG_MAX) {
-        return fail(error, error_size, "table '%s' has run out of IDs",
+        return fail(error, ERROR_IDS_EXHAUSTED, "table '%s' has run out of IDs",
                     table->name);
     }
 
@@ -28,14 +27,14 @@ static int choose_id(const Table *table, Value *values,
 // Checks each value given has its column's type. Text in values points into the
 // statement or a parameter.
 static int fill_values(ExprContext *ctx, const Statement *stmt,
-                       Value *values, char *error, size_t error_size) {
+                       Value *values, Error *error) {
     const InsertStatement *insert = &stmt->as.insert;
     const Table *table = ctx->table;
     int given[MAX_COLUMNS] = {0};
 
     if (insert->column_count == 0 &&
         (size_t)insert->value_count != table->column_count) {
-        return fail(error, error_size,
+        return fail(error, ERROR_SYNTAX,
                     "table '%s' has %zu columns but %d values were given",
                     table->name, table->column_count, insert->value_count);
     }
@@ -50,11 +49,12 @@ static int fill_values(ExprContext *ctx, const Statement *stmt,
         if (insert->column_count > 0) {
             const char *name = insert->columns[i];
 
-            if (!resolve_column(table, name, &index, error, error_size)) {
+            if (!resolve_column(table, name, &index, error)) {
                 return 0;
             }
             if (given[index]) {
-                return fail(error, error_size, "column '%s' is named twice",
+                return fail(error, ERROR_DUPLICATE_COLUMN,
+                            "column '%s' is named twice",
                             name);
             }
         }
@@ -62,11 +62,10 @@ static int fill_values(ExprContext *ctx, const Statement *stmt,
         // There's no row yet, so there are no columns to read.
         int root = insert->values[i];
 
-        if (!expr_resolve(ctx, root, 0, "VALUES", error, error_size) ||
+        if (!expr_resolve(ctx, root, 0, "VALUES", error) ||
             !check_type(&table->columns[index], ctx->types[root],
-                        "value", error, error_size) ||
-            !expr_evaluate(ctx, root, NULL, &values[index],
-                           error, error_size)) {
+                        "value", error) ||
+            !expr_evaluate(ctx, root, NULL, &values[index], error)) {
             return 0;
         }
         given[index] = 1;
@@ -75,11 +74,9 @@ static int fill_values(ExprContext *ctx, const Statement *stmt,
 }
 
 // Left-out ones included, so no NULL goes in a NOT NULL column.
-static int check_values(const Table *table, const Value *values,
-                        char *error, size_t error_size) {
+static int check_values(const Table *table, const Value *values, Error *error) {
     for (size_t i = 0; i < table->column_count; i++) {
-        if (!check_value(&table->columns[i], values[i].type,
-                         error, error_size)) {
+        if (!check_value(&table->columns[i], values[i].type, error)) {
             return 0;
         }
     }
@@ -87,9 +84,8 @@ static int check_values(const Table *table, const Value *values,
 }
 
 int execute_insert(Database *db, const Statement *stmt,
-                   const ParamList *params, Result *result,
-                   char *error, size_t error_size) {
-    Table *table = resolve_table(db, stmt->table_name, error, error_size);
+                   const ParamList *params, Result *result, Error *error) {
+    Table *table = resolve_table(db, stmt->table_name, error);
 
     if (!table) {
         return 0;
@@ -102,9 +98,9 @@ int execute_insert(Database *db, const Statement *stmt,
     expr_init(&ctx, stmt, table, params);
 
     // An ID is chosen before the check, as the key can't be NULL.
-    if (!fill_values(&ctx, stmt, values, error, error_size) ||
-        !choose_id(table, values, error, error_size) ||
-        !check_values(table, values, error, error_size)) {
+    if (!fill_values(&ctx, stmt, values, error) ||
+        !choose_id(table, values, error) ||
+        !check_values(table, values, error)) {
         return 0;
     }
 
@@ -115,8 +111,7 @@ int execute_insert(Database *db, const Statement *stmt,
         size_t other;
 
         if (table_find_key(table, constraint, values, &other)) {
-            return fail_duplicate(table, constraint, values,
-                                  error, error_size);
+            return fail_duplicate(table, constraint, values, error);
         }
     }
 
@@ -126,18 +121,17 @@ int execute_insert(Database *db, const Statement *stmt,
         Row row = { values, table->column_count };
 
         if (!select_resolve_list(&ctx, &insert->returning, EXPR_COLUMNS,
-                                 "RETURNING", error, error_size)) {
+                                 "RETURNING", error)) {
             return 0;
         }
         select_add_columns(&ctx, &insert->returning, result);
-        if (!select_append_row(&ctx, &insert->returning, &row, result,
-                               error, error_size)) {
+        if (!select_append_row(&ctx, &insert->returning, &row, result, error)) {
             return 0;
         }
     }
 
     if (!table_append_row(table, values)) {
-        return fail(error, error_size, "out of memory");
+        return fail(error, ERROR_OUT_OF_MEMORY, "out of memory");
     }
 
     result->changed = 1;

@@ -4,16 +4,15 @@
 // Shared by the parser's files and included nowhere else; the rest of TinySQL
 // includes parser.h.
 
+#include "error.h"
 #include "parser.h"
 #include "tokeniser.h"
-
-#define MAX_ERROR 256
 
 typedef struct {
     const TokenList *tokens;
     int pos;                  // The next token to read.
     int param_count;          // `?`s read so far.
-    char error[MAX_ERROR];    // Set by the first check that fails.
+    Error error;              // Set by the first check that fails.
     Statement *stmt;          // Output; its nodes hold every expression.
 } Parser;
 

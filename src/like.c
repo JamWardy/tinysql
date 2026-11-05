@@ -88,7 +88,7 @@ static int piece_matches(const LikePattern *pattern, const Piece *piece,
 }
 
 int like_init(LikePattern *out, const char *pattern, const char *escape,
-              int ignore_case, char *error, size_t error_size) {
+              int ignore_case, Error *error) {
     if (!escape) {
         escape = "\\";
     }
@@ -96,7 +96,7 @@ int like_init(LikePattern *out, const char *pattern, const char *escape,
     size_t escape_length = strlen(escape);
 
     if (escape_length > 0 && char_length(escape) != escape_length) {
-        return fail(error, error_size,
+        return fail(error, ERROR_INVALID_ESCAPE,
                     "ESCAPE must be one character, but it's '%s'", escape);
     }
 
@@ -109,7 +109,7 @@ int like_init(LikePattern *out, const char *pattern, const char *escape,
         if (starts_with_escape(out, p)) {
             p += escape_length;
             if (*p == '\0') {
-                return fail(error, error_size,
+                return fail(error, ERROR_INVALID_ESCAPE,
                             "LIKE pattern can't end with its escape "
                             "character, '%s'", escape);
             }

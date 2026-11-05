@@ -250,19 +250,18 @@ static void discard_temp(char *temp_path) {
     free(temp_path);
 }
 
-int database_save(const Database *db, const char *path,
-                  char *error, size_t error_size) {
+int database_save(const Database *db, const char *path, Error *error) {
     // Write a complete copy beside the real file, then rename it over
     // the real one, which swaps the file in a single step.
     char *temp_path = make_temp_path(path);
 
     if (!temp_path) {
-        return fail(error, error_size, "out of memory");
+        return fail(error, ERROR_OUT_OF_MEMORY, "out of memory");
     }
 
     FILE *file = fopen(temp_path, "wb");
     if (!file) {
-        fail(error, error_size, "cannot create '%s': %s",
+        fail(error, ERROR_IO, "cannot create '%s': %s",
              temp_path, strerror(errno));
         free(temp_path);  // Nothing was created, so nothing to remove.
         return 0;
@@ -281,13 +280,13 @@ int database_save(const Database *db, const char *path,
     failed |= fclose(file) != 0;
 
     if (failed) {
-        fail(error, error_size, "error writing '%s'", temp_path);
+        fail(error, ERROR_IO, "error writing '%s'", temp_path);
         discard_temp(temp_path);
         return 0;
     }
 
     if (rename(temp_path, path) != 0) {
-        fail(error, error_size, "cannot replace '%s': %s",
+        fail(error, ERROR_IO, "cannot replace '%s': %s",
              path, strerror(errno));
         discard_temp(temp_path);
         return 0;
@@ -305,17 +304,26 @@ typedef struct {
     FILE *file;
     uint64_t remaining;  // Bytes left in the file; no length can exceed it.
     uint64_t version;    // The file's FORMAT_VERSION, once it's read.
-    char *error;
-    size_t error_size;
+    Error *error;
 } Reader;
+
+// Anything wrong in the file. Running out of memory isn't the file's fault,
+// so that's read_out_of_memory.
+static int read_fail(Reader *r, const char *format, ...)
+    __attribute__((format(printf, 2, 3)));
 
 static int read_fail(Reader *r, const char *format, ...) {
     va_list args;
 
+    r->error->code = ERROR_DATA_CORRUPTED;
     va_start(args, format);
-    vsnprintf(r->error, r->error_size, format, args);
+    vsnprintf(r->error->message, sizeof(r->error->message), format, args);
     va_end(args);
     return 0;
+}
+
+static int read_out_of_memory(Reader *r) {
+    return fail(r->error, ERROR_OUT_OF_MEMORY, "out of memory");
 }
 
 static int read_bytes(Reader *r, void *out, size_t count) {
@@ -411,7 +419,7 @@ static int read_text(Reader *r, char **out) {
 
     char *text = malloc(length + 1);
     if (!text) {
-        return read_fail(r, "out of memory");
+        return read_out_of_memory(r);
     }
 
     if (!read_chars(r, text, length)) {
@@ -506,7 +514,7 @@ static int read_row(Reader *r, Table *table) {
     int ok = table_append_row(table, values);
     values_free(values, table->column_count);
 
-    return ok ? 1 : read_fail(r, "out of memory");
+    return ok ? 1 : read_out_of_memory(r);
 }
 
 // Files before version 3 have no flags byte: no column is NOT NULL.
@@ -621,7 +629,7 @@ static int read_constraints(Reader *r, Table *table) {
             return 0;
         }
         if (!table_add_constraint(table, kind, &columns)) {
-            return read_fail(r, "out of memory");
+            return read_out_of_memory(r);
         }
     }
 
@@ -691,7 +699,7 @@ static int read_indexes(Reader *r, Table *table) {
             return 0;
         }
         if (!table_add_index(table, name, &columns)) {
-            return read_fail(r, "out of memory");
+            return read_out_of_memory(r);
         }
     }
     return 1;
@@ -815,7 +823,7 @@ static int read_stats(Reader *r, Table *table) {
     ColumnStats *stats = calloc(table->column_count, sizeof(*stats));
 
     if (!stats) {
-        return read_fail(r, "out of memory");
+        return read_out_of_memory(r);
     }
     for (size_t c = 0; c < table->column_count; c++) {
         if (!read_column_stats(r, table, &table->columns[c], &stats[c])) {
@@ -864,7 +872,7 @@ static int read_table(Reader *r, Database *db) {
     Table *table = database_create_table(db, name, columns,
                                          (size_t)column_count);
     if (!table) {
-        return read_fail(r, "out of memory");
+        return read_out_of_memory(r);
     }
 
     // No other table is created while reading constraints and rows, so
@@ -925,8 +933,7 @@ static int read_database(Reader *r, Database *db) {
     return check_index_names(r, db);
 }
 
-int database_load(Database *db, const char *path,
-                  char *error, size_t error_size) {
+int database_load(Database *db, const char *path, Error *error) {
     assert(db->count == 0);
 
     errno = 0;
@@ -937,10 +944,10 @@ int database_load(Database *db, const char *path,
         if (errno == ENOENT) {
             return 1;
         }
-        return fail(error, error_size, "%s", strerror(errno));
+        return fail(error, ERROR_IO, "%s", strerror(errno));
     }
 
-    Reader r = { file, 0, 0, error, error_size };
+    Reader r = { file, 0, 0, error };
     int ok = 1;
 
     // The file's size bounds every length in it, so a corrupt length
@@ -950,7 +957,7 @@ int database_load(Database *db, const char *path,
         size = ftell(file);
     }
     if (size < 0 || fseek(file, 0, SEEK_SET) != 0) {
-        ok = read_fail(&r, "cannot read file size");
+        ok = fail(error, ERROR_IO, "cannot read file size");
     } else {
         r.remaining = (uint64_t)size;
         ok = read_database(&r, db);

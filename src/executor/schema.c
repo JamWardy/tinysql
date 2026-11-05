@@ -7,7 +7,7 @@
 
 // Checks each is one of the new table's columns, named once.
 static int resolve_key(const CreateStatement *create, const KeyDef *key,
-                       ColumnList *out, char *error, size_t error_size) {
+                       ColumnList *out, Error *error) {
     const char *kind = constraint_kind_name(key->kind);
 
     out->count = (size_t)key->column_count;
@@ -23,13 +23,13 @@ static int resolve_key(const CreateStatement *create, const KeyDef *key,
             }
         }
         if (!found) {
-            return fail(error, error_size,
+            return fail(error, ERROR_UNDEFINED_COLUMN,
                         "no such column '%s' in %s", name, kind);
         }
 
         for (size_t j = 0; j < i; j++) {
             if (out->positions[j] == out->positions[i]) {
-                return fail(error, error_size,
+                return fail(error, ERROR_DUPLICATE_COLUMN,
                             "column '%s' is in the %s twice", name, kind);
             }
         }
@@ -40,8 +40,7 @@ static int resolve_key(const CreateStatement *create, const KeyDef *key,
 
 // keys are create's keys, resolved.
 static int check_autoincrement(const CreateStatement *create,
-                               const ColumnList *keys,
-                               char *error, size_t error_size) {
+                               const ColumnList *keys, Error *error) {
     if (!create->has_autoincrement) {
         return 1;
     }
@@ -50,7 +49,7 @@ static int check_autoincrement(const CreateStatement *create,
     const ColumnDef *column = &create->columns[c];
 
     if (column->type != TYPE_INT) {
-        return fail(error, error_size,
+        return fail(error, ERROR_INVALID_TABLE_DEFINITION,
                     "AUTOINCREMENT column '%s' must be INT", column->name);
     }
 
@@ -60,7 +59,7 @@ static int check_autoincrement(const CreateStatement *create,
             return 1;
         }
     }
-    return fail(error, error_size,
+    return fail(error, ERROR_INVALID_TABLE_DEFINITION,
                 "AUTOINCREMENT column '%s' must be the whole PRIMARY KEY",
                 column->name);
 }
@@ -79,7 +78,7 @@ static int same_columns(const ColumnList *a, const ColumnList *b) {
 
 // e.g. "key (user_id, idempotency_key) is declared twice".
 static int fail_same_key(const CreateStatement *create, const ColumnList *key,
-                         char *error, size_t error_size) {
+                         Error *error) {
     char text[256];  // Cut short if it's long; it's only for the message.
     size_t length = 0;
 
@@ -93,29 +92,30 @@ static int fail_same_key(const CreateStatement *create, const ColumnList *key,
         length += written > 0 ? (size_t)written : 0;
     }
 
-    return fail(error, error_size, "key (%s) is declared twice", text);
+    return fail(error, ERROR_INVALID_TABLE_DEFINITION,
+                "key (%s) is declared twice", text);
 }
 
 // Tables and indexes share one set of names, as in Postgres and SQLite.
-static int check_name_free(const Database *db, const char *name,
-                           char *error, size_t error_size) {
+static int check_name_free(const Database *db, const char *name, Error *error) {
     size_t table;
     size_t index;
 
     if (database_lookup_table(db, name)) {
-        return fail(error, error_size, "table '%s' already exists", name);
+        return fail(error, ERROR_DUPLICATE_TABLE,
+                    "table '%s' already exists", name);
     }
     if (database_find_index(db, name, &table, &index)) {
-        return fail(error, error_size, "index '%s' already exists", name);
+        return fail(error, ERROR_DUPLICATE_TABLE,
+                    "index '%s' already exists", name);
     }
     return 1;
 }
 
-int execute_create(Database *db, const Statement *stmt,
-                   char *error, size_t error_size) {
+int execute_create(Database *db, const Statement *stmt, Error *error) {
     const CreateStatement *create = &stmt->as.create;
 
-    if (!check_name_free(db, stmt->table_name, error, error_size)) {
+    if (!check_name_free(db, stmt->table_name, error)) {
         return 0;
     }
 
@@ -123,7 +123,8 @@ int execute_create(Database *db, const Statement *stmt,
         for (int j = 0; j < i; j++) {
             if (strcmp(create->columns[i].name,
                        create->columns[j].name) == 0) {
-                return fail(error, error_size, "duplicate column '%s'",
+                return fail(error, ERROR_DUPLICATE_COLUMN,
+                            "duplicate column '%s'",
                             create->columns[i].name);
             }
         }
@@ -132,18 +133,17 @@ int execute_create(Database *db, const Statement *stmt,
     ColumnList keys[MAX_KEYS];
 
     for (int i = 0; i < create->key_count; i++) {
-        if (!resolve_key(create, &create->keys[i], &keys[i],
-                         error, error_size)) {
+        if (!resolve_key(create, &create->keys[i], &keys[i], error)) {
             return 0;
         }
         for (int j = 0; j < i; j++) {
             if (same_columns(&keys[i], &keys[j])) {
-                return fail_same_key(create, &keys[i], error, error_size);
+                return fail_same_key(create, &keys[i], error);
             }
         }
     }
 
-    if (!check_autoincrement(create, keys, error, error_size)) {
+    if (!check_autoincrement(create, keys, error)) {
         return 0;
     }
 
@@ -151,14 +151,14 @@ int execute_create(Database *db, const Statement *stmt,
                                          create->columns,
                                          (size_t)create->column_count);
     if (!table) {
-        return fail(error, error_size, "out of memory");
+        return fail(error, ERROR_OUT_OF_MEMORY, "out of memory");
     }
 
     // Undo the half-made table, so a failure leaves no trace.
     for (int i = 0; i < create->key_count; i++) {
         if (!table_add_constraint(table, create->keys[i].kind, &keys[i])) {
             database_drop_table(db, table);
-            return fail(error, error_size, "out of memory");
+            return fail(error, ERROR_OUT_OF_MEMORY, "out of memory");
         }
     }
 
@@ -167,17 +167,17 @@ int execute_create(Database *db, const Statement *stmt,
     return 1;
 }
 
-int execute_create_index(Database *db, const Statement *stmt,
-                         char *error, size_t error_size) {
+int execute_create_index(Database *db, const Statement *stmt, Error *error) {
     const CreateIndexStatement *create = &stmt->as.create_index;
-    Table *table = resolve_table(db, stmt->table_name, error, error_size);
+    Table *table = resolve_table(db, stmt->table_name, error);
     ColumnList columns;
 
-    if (!table || !check_name_free(db, create->name, error, error_size)) {
+    if (!table || !check_name_free(db, create->name, error)) {
         return 0;
     }
     if (table->index_count == MAX_INDEXES) {
-        return fail(error, error_size, "too many indexes on table '%s' "
+        return fail(error, ERROR_PROGRAM_LIMIT,
+                    "too many indexes on table '%s' "
                     "(max %d)", table->name, MAX_INDEXES);
     }
 
@@ -185,31 +185,29 @@ int execute_create_index(Database *db, const Statement *stmt,
     for (size_t i = 0; i < columns.count; i++) {
         const char *name = create->columns[i];
 
-        if (!resolve_column(table, name, &columns.positions[i],
-                            error, error_size)) {
+        if (!resolve_column(table, name, &columns.positions[i], error)) {
             return 0;
         }
         for (size_t j = 0; j < i; j++) {
             if (columns.positions[j] == columns.positions[i]) {
-                return fail(error, error_size,
+                return fail(error, ERROR_DUPLICATE_COLUMN,
                             "column '%s' is in the index twice", name);
             }
         }
     }
 
     if (!table_add_index(table, create->name, &columns)) {
-        return fail(error, error_size, "out of memory");
+        return fail(error, ERROR_OUT_OF_MEMORY, "out of memory");
     }
     return 1;
 }
 
-int execute_drop_index(Database *db, const Statement *stmt,
-                       char *error, size_t error_size) {
+int execute_drop_index(Database *db, const Statement *stmt, Error *error) {
     size_t table;
     size_t index;
 
     if (!database_find_index(db, stmt->index_name, &table, &index)) {
-        return fail(error, error_size, "no such index '%s'",
+        return fail(error, ERROR_UNDEFINED_OBJECT, "no such index '%s'",
                     stmt->index_name);
     }
 
@@ -217,9 +215,8 @@ int execute_drop_index(Database *db, const Statement *stmt,
     return 1;
 }
 
-int execute_drop(Database *db, const Statement *stmt,
-                 char *error, size_t error_size) {
-    Table *table = resolve_table(db, stmt->table_name, error, error_size);
+int execute_drop(Database *db, const Statement *stmt, Error *error) {
+    Table *table = resolve_table(db, stmt->table_name, error);
 
     if (!table) {
         return 0;

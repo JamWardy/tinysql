@@ -10,14 +10,14 @@
 // COMMIT and ROLLBACK do their work here, as the executor never sees
 // the file, and any other change is autocommitted.
 static int update_file(Database *db, const char *path, StatementType type,
-                       char *error, size_t error_size) {
+                       Error *error) {
     switch (type) {
         case STMT_BEGIN:
-            return transaction_begin(db, path, error, error_size);
+            return transaction_begin(db, path, error);
         case STMT_COMMIT:
-            return transaction_commit(db, path, error, error_size);
+            return transaction_commit(db, path, error);
         case STMT_ROLLBACK:
-            return transaction_rollback(db, path, error, error_size);
+            return transaction_rollback(db, path, error);
         case STMT_SELECT:
             return 1;
         case STMT_CREATE:
@@ -28,28 +28,28 @@ static int update_file(Database *db, const char *path, StatementType type,
         case STMT_CREATE_INDEX:
         case STMT_DROP_INDEX:
         case STMT_ANALYZE:
-            return transaction_autocommit(db, path, error, error_size);
+            return transaction_autocommit(db, path, error);
     }
 
-    return fail(error, error_size, "unknown statement type");
+    return fail(error, ERROR_INTERNAL, "unknown statement type");
 }
 
 int tinysql_run(Database *db, const char *path, const char *sql,
                 const Value *params, size_t param_count,
-                Result *result, char *error, size_t error_size) {
+                Result *result, Error *error) {
     static TokenList tokens;  // Large, so keep these off the stack.
     static Statement stmt;
     ParamList param_list = { params, param_count };
 
-    if (!tokenise(sql, &tokens, error, error_size) ||
-        !parse(&tokens, &stmt, error, error_size) ||
-        !execute(db, &stmt, &param_list, result, error, error_size)) {
+    if (!tokenise(sql, &tokens, error) ||
+        !parse(&tokens, &stmt, error) ||
+        !execute(db, &stmt, &param_list, result, error)) {
         return 0;
     }
 
     // EXPLAIN changes nothing, so there's nothing to save.
     if (!stmt.explain &&
-        !update_file(db, path, stmt.type, error, error_size)) {
+        !update_file(db, path, stmt.type, error)) {
         result_free(result);
         return 0;
     }

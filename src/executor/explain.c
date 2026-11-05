@@ -112,9 +112,8 @@ static long long round_estimate(double estimate) {
 }
 
 int execute_explain(Database *db, const Statement *stmt,
-                    const ParamList *params, Result *result,
-                    char *error, size_t error_size) {
-    Table *table = resolve_table(db, stmt->table_name, error, error_size);
+                    const ParamList *params, Result *result, Error *error) {
+    Table *table = resolve_table(db, stmt->table_name, error);
     ExprContext ctx;
     Filter filter;
     const Filter *where;
@@ -128,8 +127,7 @@ int execute_explain(Database *db, const Statement *stmt,
 
     find_where(stmt, &has_where, &root);
     expr_init(&ctx, stmt, table, params);
-    if (!where_resolve(&ctx, has_where, root, &filter, &where,
-                       error, error_size)) {
+    if (!where_resolve(&ctx, has_where, root, &filter, &where, error)) {
         return 0;
     }
 
@@ -142,10 +140,10 @@ int execute_explain(Database *db, const Statement *stmt,
 
         if (select->has_order && !is_aggregate_select(stmt) &&
             !expr_resolve(&ctx, select->order_by, EXPR_COLUMNS, "ORDER BY",
-                          error, error_size)) {
+                          error)) {
             return 0;
         }
-        if (!find_row_order(&ctx, stmt, params, &order, error, error_size)) {
+        if (!find_row_order(&ctx, stmt, params, &order, error)) {
             return 0;
         }
         wanted = &order;
@@ -177,7 +175,7 @@ int execute_explain(Database *db, const Statement *stmt,
         row[4].as.integer = round_estimate(candidates.matches);
 
         if (!result_append_row(result, row)) {
-            return fail(error, error_size, "out of memory");
+            return fail(error, ERROR_OUT_OF_MEMORY, "out of memory");
         }
     }
     return 1;

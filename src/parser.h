@@ -1,6 +1,7 @@
 #ifndef TINYSQL_PARSER_H
 #define TINYSQL_PARSER_H
 
+#include "error.h"
 #include "tokeniser.h"
 
 #define MAX_COLUMNS 32
@@ -257,7 +258,6 @@ const char *literal_as_text(const Literal *lit);
 void expr_to_text(const ExprNode *nodes, int node, char *out, size_t size);
 
 // On failure, out must not be used.
-int parse(const TokenList *tokens, Statement *out,
-          char *error, size_t error_size);
+int parse(const TokenList *tokens, Statement *out, Error *error);
 
 #endif

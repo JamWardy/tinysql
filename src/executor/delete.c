@@ -3,10 +3,9 @@
 #include <stdlib.h>
 
 int execute_delete(Database *db, const Statement *stmt,
-                   const ParamList *params, Result *result,
-                   char *error, size_t error_size) {
+                   const ParamList *params, Result *result, Error *error) {
     const DeleteStatement *delete = &stmt->as.delete;
-    Table *table = resolve_table(db, stmt->table_name, error, error_size);
+    Table *table = resolve_table(db, stmt->table_name, error);
 
     if (!table) {
         return 0;
@@ -21,13 +20,13 @@ int execute_delete(Database *db, const Statement *stmt,
     expr_init(&ctx, stmt, table, params);
 
     if (!where_resolve(&ctx, delete->has_where, delete->where,
-                       &filter, &where, error, error_size)) {
+                       &filter, &where, error)) {
         return 0;
     }
 
     PositionList matched;
 
-    if (!where_collect_positions(table, where, &matched, error, error_size)) {
+    if (!where_collect_positions(table, where, &matched, error)) {
         return 0;
     }
 

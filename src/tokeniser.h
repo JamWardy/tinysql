@@ -3,6 +3,8 @@
 
 #include <stddef.h>
 
+#include "error.h"
+
 #define MAX_TOKENS 256
 #define MAX_TOKEN_LENGTH 128
 
@@ -87,7 +89,7 @@ typedef struct {
 } TokenList;
 
 // list always ends in TOKEN_EOF. On failure, list mustn't be used.
-int tokenise(const char *sql, TokenList *list, char *error, size_t error_size);
+int tokenise(const char *sql, TokenList *list, Error *error);
 const char *token_type_name(TokenType type);
 
 #endif

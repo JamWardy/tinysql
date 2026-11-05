@@ -63,13 +63,12 @@ static int updated_row_has_key(size_t row, const void *context) {
 static int check_key_after_update(const Table *table,
                                   const Constraint *constraint,
                                   const size_t *updating,
-                                  const Changes *changes,
-                                  char *error, size_t error_size) {
+                                  const Changes *changes, Error *error) {
     Index seen;
 
     index_init(&seen);
     if (!index_reserve(&seen, table->row_count)) {
-        return fail(error, error_size, "out of memory");
+        return fail(error, ERROR_OUT_OF_MEMORY, "out of memory");
     }
 
     int ok = 1;
@@ -89,8 +88,7 @@ static int check_key_after_update(const Table *table,
         size_t other;
 
         if (index_find(&seen, hash, updated_row_has_key, &search, &other)) {
-            ok = fail_duplicate(table, constraint, after,
-                                error, error_size);
+            ok = fail_duplicate(table, constraint, after, error);
         } else {
             index_insert(&seen, hash, r);
         }
@@ -102,8 +100,7 @@ static int check_key_after_update(const Table *table,
 
 static int check_keys_after_update(const Table *table,
                                    const PositionList *matched,
-                                   const Changes *changes,
-                                   char *error, size_t error_size) {
+                                   const Changes *changes, Error *error) {
     size_t *updating = NULL;  // Per row, as values_after_update reads it.
     int ok = 1;
 
@@ -127,7 +124,7 @@ static int check_keys_after_update(const Table *table,
         if (!updating) {
             updating = calloc(table->row_count, sizeof(*updating));
             if (!updating) {
-                return fail(error, error_size, "out of memory");
+                return fail(error, ERROR_OUT_OF_MEMORY, "out of memory");
             }
             for (size_t i = 0; i < matched->count; i++) {
                 updating[matched->positions[i]] = i + 1;
@@ -135,7 +132,7 @@ static int check_keys_after_update(const Table *table,
         }
 
         ok = check_key_after_update(table, constraint, updating, changes,
-                                    error, error_size);
+                                    error);
     }
 
     free(updating);
@@ -145,7 +142,7 @@ static int check_keys_after_update(const Table *table,
 // Checks each column exists, is set at most once, and gets an expression of its
 // type.
 static int resolve_changes(ExprContext *ctx, const UpdateStatement *update,
-                           Changes *out, char *error, size_t error_size) {
+                           Changes *out, Error *error) {
     const Table *table = ctx->table;
 
     out->columns.count = (size_t)update->assignment_count;
@@ -155,19 +152,17 @@ static int resolve_changes(ExprContext *ctx, const UpdateStatement *update,
         const Assignment *assign = &update->assignments[i];
         size_t index;
 
-        if (!resolve_column(table, assign->column, &index,
-                            error, error_size) ||
-            !expr_resolve(ctx, assign->value, EXPR_COLUMNS, "SET",
-                          error, error_size) ||
+        if (!resolve_column(table, assign->column, &index, error) ||
+            !expr_resolve(ctx, assign->value, EXPR_COLUMNS, "SET", error) ||
             !check_type(&table->columns[index],
-                        ctx->types[assign->value], "value",
-                        error, error_size)) {
+                        ctx->types[assign->value], "value", error)) {
             return 0;
         }
 
         for (size_t j = 0; j < i; j++) {
             if (out->columns.positions[j] == index) {
-                return fail(error, error_size, "column '%s' is set twice",
+                return fail(error, ERROR_DUPLICATE_COLUMN,
+                            "column '%s' is set twice",
                             assign->column);
             }
         }
@@ -184,14 +179,14 @@ static int resolve_changes(ExprContext *ctx, const UpdateStatement *update,
 // on overflow, division by zero or a NULL for a NOT NULL column.
 static int compute_changes(const ExprContext *ctx,
                            const PositionList *matched, Changes *changes,
-                           char *error, size_t error_size) {
+                           Error *error) {
     const Table *table = ctx->table;
     size_t width = changes->columns.count;
     size_t count = matched->count * width;
 
     changes->values = malloc(count * sizeof(*changes->values));
     if (!changes->values && count > 0) {
-        return fail(error, error_size, "out of memory");
+        return fail(error, ERROR_OUT_OF_MEMORY, "out of memory");
     }
 
     for (size_t i = 0; i < matched->count; i++) {
@@ -201,9 +196,8 @@ static int compute_changes(const ExprContext *ctx,
             Value *value = &changes->values[i * width + c];
             const Column *column = &table->columns[changes->columns.positions[c]];
 
-            if (!expr_evaluate(ctx, changes->exprs[c], row, value,
-                               error, error_size) ||
-                !check_value(column, value->type, error, error_size)) {
+            if (!expr_evaluate(ctx, changes->exprs[c], row, value, error) ||
+                !check_value(column, value->type, error)) {
                 return 0;
             }
         }
@@ -237,10 +231,9 @@ static int write_row(Table *table, size_t r, const Changes *changes,
 }
 
 int execute_update(Database *db, const Statement *stmt,
-                   const ParamList *params, Result *result,
-                   char *error, size_t error_size) {
+                   const ParamList *params, Result *result, Error *error) {
     const UpdateStatement *update = &stmt->as.update;
-    Table *table = resolve_table(db, stmt->table_name, error, error_size);
+    Table *table = resolve_table(db, stmt->table_name, error);
 
     if (!table) {
         return 0;
@@ -255,9 +248,9 @@ int execute_update(Database *db, const Statement *stmt,
 
     expr_init(&ctx, stmt, table, params);
 
-    if (!resolve_changes(&ctx, update, &changes, error, error_size) ||
+    if (!resolve_changes(&ctx, update, &changes, error) ||
         !where_resolve(&ctx, update->has_where, update->where,
-                       &filter, &where, error, error_size)) {
+                       &filter, &where, error)) {
         return 0;
     }
 
@@ -265,13 +258,12 @@ int execute_update(Database *db, const Statement *stmt,
     // can't affect the test on another.
     PositionList matched;
 
-    if (!where_collect_positions(table, where, &matched, error, error_size)) {
+    if (!where_collect_positions(table, where, &matched, error)) {
         return 0;
     }
 
-    if (!compute_changes(&ctx, &matched, &changes, error, error_size) ||
-        !check_keys_after_update(table, &matched, &changes,
-                                 error, error_size)) {
+    if (!compute_changes(&ctx, &matched, &changes, error) ||
+        !check_keys_after_update(table, &matched, &changes, error)) {
         free(changes.values);
         free(matched.positions);
         return 0;
@@ -291,7 +283,7 @@ int execute_update(Database *db, const Statement *stmt,
     free(matched.positions);
 
     if (!ok) {
-        return fail(error, error_size,
+        return fail(error, ERROR_OUT_OF_MEMORY,
                     "out of memory after updating %zu rows", updated);
     }
     result->changed = updated;

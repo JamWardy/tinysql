@@ -3,6 +3,8 @@
 
 #include <stddef.h>
 
+#include "error.h"
+
 // A LIKE or ILIKE pattern, checked and ready to match. `%` matches any run of
 // characters and `_` any one, counting a UTF-8 character as one; the escape
 // character makes the one after it literal. Its text is borrowed, from the
@@ -17,7 +19,7 @@ typedef struct {
 // escape is NULL for the default, `\`, or empty for none. Fails if escape is
 // longer than one character, or the pattern ends with it.
 int like_init(LikePattern *out, const char *pattern, const char *escape,
-              int ignore_case, char *error, size_t error_size);
+              int ignore_case, Error *error);
 
 int like_matches(const LikePattern *pattern, const char *text);
 
