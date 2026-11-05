@@ -217,6 +217,8 @@ typedef enum {
 // What the parser produces and the executor consumes.
 typedef struct {
     StatementType type;
+    int explain;  // 1 for EXPLAIN: describe how it would find its rows
+                  // instead of running it. Only on SELECT, UPDATE, DELETE.
     char table_name[MAX_TOKEN_LENGTH];
     char index_name[MAX_TOKEN_LENGTH];  // DROP INDEX's.
     int param_count;  // How many `?`s, each a LITERAL_PARAM.

@@ -69,6 +69,7 @@ const char *token_type_name(TokenType type) {
         case TOKEN_RETURNING:      return "RETURNING";
         case TOKEN_INDEX:          return "INDEX";
         case TOKEN_ON:             return "ON";
+        case TOKEN_EXPLAIN:        return "EXPLAIN";
         case TOKEN_EOF:            return "EOF";
     }
     return "UNKNOWN";
@@ -122,6 +123,7 @@ static const Keyword keywords[] = {
     { "RETURNING", TOKEN_RETURNING },
     { "INDEX",  TOKEN_INDEX },
     { "ON",     TOKEN_ON },
+    { "EXPLAIN", TOKEN_EXPLAIN },
 };
 
 // Compares a word of the given length against an upper-case keyword,

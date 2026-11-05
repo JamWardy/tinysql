@@ -63,6 +63,11 @@ int execute_create_index(Database *db, const Statement *stmt,
 int execute_drop_index(Database *db, const Statement *stmt,
                        char *error, size_t error_size);
 
+// explain.c: for EXPLAIN, fills result with a row per plan considered.
+int execute_explain(Database *db, const Statement *stmt,
+                    const ParamList *params, Result *result,
+                    char *error, size_t error_size);
+
 // insert.c, select.c, delete.c and update.c fill result, and read any
 // `?`s' values from params.
 int execute_insert(Database *db, const Statement *stmt,
@@ -173,6 +178,55 @@ int expr_has_aggregate(const ExprNode *nodes, int node);
 // may differ from row to row.
 int expr_uses_columns(const ExprNode *nodes, int node);
 
+// plan.c: choosing how to find a statement's rows.
+
+// What a WHERE needs of one column, from comparisons `c op e` (or
+// `e op c`) where e reads no columns, so is the same for every row.
+typedef struct {
+    int equal;            // e's node in `c = e`, or -1.
+    int lower;            // e's node in `c > e` or `c >= e`, or -1.
+    int lower_inclusive;  // 1 for >=.
+    int upper;            // e's node in `c < e` or `c <= e`, or -1.
+    int upper_inclusive;  // 1 for <=.
+} ColumnBounds;
+
+typedef enum {
+    PLAN_SCAN,   // Read every row.
+    PLAN_KEY,    // Find one row through a key's hash index.
+    PLAN_INDEX   // Read a range of a CREATE INDEX index.
+} PlanKind;
+
+// One way of finding a statement's rows, with its estimates.
+typedef struct {
+    PlanKind kind;
+    const Constraint *constraint;  // PLAN_KEY's key, whose every column
+                                   // the WHERE pins with =.
+    const TreeIndex *index;        // PLAN_INDEX's index,
+    size_t equal_count;            // how many leading columns are pinned
+    const ColumnBounds *range;     // and the next column's bounds, or NULL.
+    double reads;                  // Estimated rows read.
+    double cost;
+} Plan;
+
+// Reading every row, then a plan per key and per index at most.
+#define MAX_PLANS (1 + MAX_KEYS + MAX_INDEXES)
+
+// Every way considered of finding the rows of a table a WHERE matches,
+// and the cheapest. Plans point into bounds, so a PlanChoice mustn't be
+// copied.
+typedef struct {
+    ColumnBounds bounds[MAX_COLUMNS];  // Per column of the table.
+    Plan plans[MAX_PLANS];             // plans[0] reads every row.
+    size_t count;
+    size_t chosen;
+    double matches;  // Estimated rows the whole WHERE matches.
+} PlanChoice;
+
+// Fills choice for the rows of table that filter matches, or every row
+// when filter is NULL. Reads no rows, and evaluates nothing.
+void plan_choose(const Table *table, const Filter *filter,
+                 PlanChoice *choice);
+
 // where.c: checking a WHERE and finding the rows it matches.
 
 // Resolves the WHERE expression at root in ctx, checks it's a BOOL, and
@@ -184,7 +238,7 @@ int where_resolve(ExprContext *ctx, int has_where, int root, Filter *filter,
                   const Filter **out, char *error, size_t error_size);
 
 // Fills out with the positions of the rows filter matches, in table
-// order, through a key's index when the filter allows it. Fails if
+// order, by the way plan_choose picks. Fails if
 // evaluating the WHERE does, for overflow or division by zero.
 int where_collect_positions(const Table *table, const Filter *filter,
                             PositionList *out, char *error, size_t error_size);

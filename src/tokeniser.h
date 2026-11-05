@@ -68,6 +68,7 @@ typedef enum {
     TOKEN_RETURNING,
     TOKEN_INDEX,
     TOKEN_ON,
+    TOKEN_EXPLAIN,
     TOKEN_EOF
 } TokenType;
 

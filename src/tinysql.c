@@ -46,7 +46,9 @@ int tinysql_run(Database *db, const char *path, const char *sql,
         return 0;
     }
 
-    if (!update_file(db, path, stmt.type, error, error_size)) {
+    // EXPLAIN changes nothing, so there's nothing to save.
+    if (!stmt.explain &&
+        !update_file(db, path, stmt.type, error, error_size)) {
         result_free(result);
         return 0;
     }

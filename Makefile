@@ -21,7 +21,8 @@ EXECUTOR_SRCS = src/executor/executor.c src/executor/common.c \
                 src/executor/expr.c src/executor/where.c \
                 src/executor/schema.c \
                 src/executor/insert.c src/executor/select.c \
-                src/executor/update.c src/executor/delete.c
+                src/executor/update.c src/executor/delete.c \
+                src/executor/plan.c src/executor/explain.c
 # The REPL: reading input, printing results and the .tables and .schema
 # commands.
 APP_SRCS = src/repl/main.c src/repl/input.c src/repl/print.c \

@@ -1,15 +1,19 @@
 #include "internal.h"
 
+#include "error.h"
 #include "text.h"
 
 // statement = ( create_stmt | insert_stmt | select_stmt | delete_stmt
-//             | update_stmt | drop_stmt | transaction_stmt ) SEMICOLON EOF
+//             | update_stmt | drop_stmt | transaction_stmt
+//             | EXPLAIN ( select_stmt | update_stmt | delete_stmt ) )
+//             SEMICOLON EOF
 int parse(const TokenList *tokens, Statement *out,
           char *error, size_t error_size) {
     Parser p = { tokens, 0, 0, "", out };
     int ok;
 
     out->node_count = 0;
+    out->explain = match(&p, TOKEN_EXPLAIN);
 
     switch (peek(&p)->type) {
         case TOKEN_CREATE:
@@ -44,7 +48,7 @@ int parse(const TokenList *tokens, Statement *out,
 
         default:
             error_expected(&p, "CREATE, INSERT, SELECT, UPDATE, DELETE, "
-                               "DROP, BEGIN, COMMIT or ROLLBACK");
+                               "DROP, BEGIN, COMMIT, ROLLBACK or EXPLAIN");
             ok = 0;
             break;
     }
@@ -52,6 +56,13 @@ int parse(const TokenList *tokens, Statement *out,
     ok = ok &&
          expect(&p, TOKEN_SEMICOLON, "';'") != NULL &&
          expect(&p, TOKEN_EOF, "end of input") != NULL;
+
+    // Only these find rows, so only they have a plan to explain.
+    if (ok && out->explain && out->type != STMT_SELECT &&
+        out->type != STMT_UPDATE && out->type != STMT_DELETE) {
+        ok = fail(p.error, sizeof(p.error),
+                  "EXPLAIN works on SELECT, UPDATE and DELETE");
+    }
 
     if (!ok) {
         copy_text(error, error_size, p.error);

@@ -14,7 +14,8 @@ typedef struct {
 } ParamList;
 
 // Runs stmt against db, filling result, which must be empty (as
-// result_init leaves it); the caller frees it with result_free.
+// result_init leaves it); the caller frees it with result_free. An
+// EXPLAIN fills result with the plans instead, and changes nothing.
 // Returns 1, or 0 with a message in error and result left empty. A
 // failed UPDATE may have changed some rows if memory ran out.
 int execute(Database *db, const Statement *stmt, const ParamList *params,

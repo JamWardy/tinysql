@@ -18,7 +18,8 @@ token types produced by the tokeniser in `src/tokeniser.h`.
 
 ```
 statement     = ( create_stmt | insert_stmt | select_stmt | delete_stmt
-                | update_stmt | drop_stmt | transaction_stmt )
+                | update_stmt | drop_stmt | transaction_stmt
+                | EXPLAIN ( select_stmt | update_stmt | delete_stmt ) )
                 SEMICOLON EOF
 
 create_stmt   = CREATE TABLE IDENTIFIER
@@ -518,11 +519,8 @@ to read; the whole `WHERE` is still checked on each, so `status =
 `(item_id, expires_at)` can't help a `WHERE` on `expires_at` alone, as
 those rows are spread through it.
 
-A `WHERE` that pins down a whole `PRIMARY KEY` or `UNIQUE` key with `=`
-uses that key's own index. Otherwise it uses the `CREATE INDEX` index
-with the most leading columns pinned by `=`, preferring one with a range
-on the next column, and the first created on a tie. With none, it reads
-every row.
+Whether a statement uses an index, and which, is the planner's choice:
+see "Plans".
 
 - Index names share one set of names with tables, as in Postgres and
   SQLite: no index can have a table's name, nor another index's.
@@ -534,6 +532,70 @@ every row.
   column names.
 
 See `INDEXES.md` for how the B-tree works.
+
+## Plans
+
+Before a `SELECT`, `UPDATE` or `DELETE` reads any row, TinySQL plans how
+to find its rows, as Postgres does. It lists the ways that could work:
+
+- reading every row, which always works;
+- a key's own index, when the `WHERE` pins every column of a
+  `PRIMARY KEY` or `UNIQUE` key with `=`, which finds at most one row;
+- each `CREATE INDEX` index the `WHERE` can use (see "Indexes").
+
+For each it estimates how many rows it would read, and gives it a cost:
+1 for each row read in turn, and 4 for each reached through an index,
+which costs more per row, as Postgres weighs reading in order against
+jumping about. The cheapest wins, and the first listed on a tie, so an
+index is used only when it reads under about a quarter of the rows. On a
+tiny table, reading every row can beat even a key.
+
+The plan only decides how many rows are read, never which match: the
+whole `WHERE` is checked on every row found, whichever way it's found.
+A bad estimate makes a statement slow, never wrong.
+
+Without statistics, the estimates are Postgres's default guesses, as
+fractions of the table's rows:
+
+| Condition | Fraction |
+|---|---|
+| `x = y` | 0.5% |
+| `x <> y` | 99.5% |
+| `x > y`, `x >= y`, `x < y`, `x <= y` | a third |
+| `x IS NULL` | 0.5% |
+| `x IS NOT NULL` | 99.5% |
+| `a AND b` | fa × fb, as if a and b were unrelated |
+| `a OR b` | fa + fb − fa × fb |
+| `NOT a` | 1 − fa |
+| `TRUE`, `FALSE` | all, none |
+
+A comparison gets its fraction whatever is on each side, a column, a
+value or an expression such as `a + b`, as in Postgres.
+
+An estimate of under one row counts as one, unless the table is empty,
+and a `WHERE` that pins a whole key matches at most one row.
+
+### EXPLAIN
+
+`EXPLAIN` before a `SELECT`, `UPDATE` or `DELETE` shows the plan instead
+of running it, as rows: each way considered, the rows it would read, its
+cost, which was chosen, and the rows the whole `WHERE` is guessed to
+match. It changes nothing.
+
+```sql
+EXPLAIN SELECT * FROM orders WHERE item_id = 5 AND expires_at > 1700000000;
+```
+```
+plan                                                | reads  | cost   | chosen | matches
+----------------------------------------------------+--------+--------+--------+--------
+every row                                           | 100000 | 100000 |        |     167
+index orders_item_expires (item_id =, expires_at >) |    167 |    667 | yes    |     167
+```
+
+Only the table and the `WHERE` are checked, so a mistake elsewhere in
+the statement shows up only when it runs. It needs a value for each
+`?`, as running would. Unlike Postgres's `EXPLAIN`, it shows the ways
+it didn't choose, too.
 ## Keys
 
 A key is one or more columns whose values, together, are different in

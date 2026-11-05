@@ -50,13 +50,20 @@ int execute(Database *db, const Statement *stmt, const ParamList *params,
                     stmt->param_count, params->count);
     }
 
+    int ok = stmt->explain
+                 ? execute_explain(db, stmt, params, result,
+                                   error, error_size)
+                 : execute_statement(db, stmt, params, result,
+                                     error, error_size);
+
     // A SELECT can fail partway through filling result, e.g. running out
     // of memory, so empty it here rather than on every error path.
-    if (!execute_statement(db, stmt, params, result, error, error_size)) {
+    if (!ok) {
         result_free(result);
         return 0;
     }
 
-    result->type = stmt->type;
+    // EXPLAIN's result is rows, like a SELECT's.
+    result->type = stmt->explain ? STMT_SELECT : stmt->type;
     return 1;
 }
