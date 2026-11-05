@@ -71,15 +71,15 @@ static uint64_t decode_uint(const unsigned char *bytes, size_t size) {
     return n;
 }
 
-FrameStatus protocol_next_frame(const Buffer *in, unsigned char *type,
-                                size_t *body_length) {
+FrameStatus protocol_next_frame(const Buffer *in, size_t max_body,
+                                unsigned char *type, size_t *body_length) {
     if (in->length < PROTOCOL_HEADER_SIZE) {
         return FRAME_INCOMPLETE;
     }
 
     uint64_t length = decode_uint(in->data + 1, 4);
 
-    if (length > PROTOCOL_MAX_BODY) {
+    if (length > max_body) {
         return FRAME_TOO_BIG;
     }
     if (in->length - PROTOCOL_HEADER_SIZE < length) {
@@ -188,17 +188,16 @@ static int read_value(BodyReader *r, Value *out, Error *error) {
                 (unsigned long long)type);
 }
 
-int protocol_read_query(const unsigned char *body, size_t length, Query *out,
-                        Error *error) {
-    BodyReader r = { body, length };
+// One statement, as in 'Q'. On failure out is left empty.
+static int read_statement(BodyReader *r, Query *out, Error *error) {
     uint64_t count;
 
     out->sql = NULL;
     out->params = NULL;
     out->param_count = 0;
 
-    if (!read_text(&r, &out->sql, error) ||
-        !read_uint(&r, 2, &count, error)) {
+    if (!read_text(r, &out->sql, error) ||
+        !read_uint(r, 2, &count, error)) {
         query_free(out);
         return 0;
     }
@@ -213,17 +212,30 @@ int protocol_read_query(const unsigned char *body, size_t length, Query *out,
 
     // param_count counts only values read, so query_free frees just those.
     while (out->param_count < count) {
-        if (!read_value(&r, &out->params[out->param_count], error)) {
+        if (!read_value(r, &out->params[out->param_count], error)) {
             query_free(out);
             return 0;
         }
         out->param_count++;
     }
+    return 1;
+}
 
+static int fail_left_over(const BodyReader *r, Error *error) {
+    return fail(error, ERROR_PROTOCOL_VIOLATION,
+                "message has %zu bytes left over", r->remaining);
+}
+
+int protocol_read_query(const unsigned char *body, size_t length, Query *out,
+                        Error *error) {
+    BodyReader r = { body, length };
+
+    if (!read_statement(&r, out, error)) {
+        return 0;
+    }
     if (r.remaining != 0) {
         query_free(out);
-        return fail(error, ERROR_PROTOCOL_VIOLATION,
-                    "query message has %zu bytes left over", r.remaining);
+        return fail_left_over(&r, error);
     }
     return 1;
 }
@@ -235,6 +247,54 @@ void query_free(Query *query) {
     query->sql = NULL;
     query->params = NULL;
     query->param_count = 0;
+}
+
+int protocol_read_unit(const unsigned char *body, size_t length, Unit *out,
+                       Error *error) {
+    BodyReader r = { body, length };
+    uint64_t count;
+
+    out->statements = NULL;
+    out->count = 0;
+
+    if (!read_uint(&r, 4, &count, error)) {
+        return 0;
+    }
+    // Each statement takes at least 6 bytes, so a bad count can't make this
+    // allocate more than the message could hold.
+    if (count > r.remaining / 6) {
+        return fail_short(error);
+    }
+    if (count > 0) {
+        out->statements = calloc((size_t)count, sizeof(Query));
+        if (!out->statements) {
+            return fail(error, ERROR_OUT_OF_MEMORY, "out of memory");
+        }
+    }
+
+    // count counts only statements read, so unit_free frees just those.
+    while (out->count < count) {
+        if (!read_statement(&r, &out->statements[out->count], error)) {
+            unit_free(out);
+            return 0;
+        }
+        out->count++;
+    }
+
+    if (r.remaining != 0) {
+        unit_free(out);
+        return fail_left_over(&r, error);
+    }
+    return 1;
+}
+
+void unit_free(Unit *unit) {
+    for (size_t i = 0; i < unit->count; i++) {
+        query_free(&unit->statements[i]);
+    }
+    free(unit->statements);
+    unit->statements = NULL;
+    unit->count = 0;
 }
 
 // ---- Writing ----
@@ -374,6 +434,53 @@ int protocol_write_ready(Buffer *out, int in_transaction) {
 
     if (!begin_message(out, MESSAGE_READY, &start) ||
         !buffer_append(out, &status, 1)) {
+        return 0;
+    }
+    end_message(out, start);
+    return 1;
+}
+
+int protocol_write_replicate(Buffer *out) {
+    size_t start;
+
+    if (!begin_message(out, MESSAGE_REPLICATE, &start)) {
+        return 0;
+    }
+    end_message(out, start);
+    return 1;
+}
+
+int protocol_write_snapshot(Buffer *out, const Buffer *file) {
+    size_t start;
+
+    if (!begin_message(out, MESSAGE_SNAPSHOT, &start) ||
+        !buffer_append(out, file->data, file->length)) {
+        return 0;
+    }
+    end_message(out, start);
+    return 1;
+}
+
+int protocol_append_statement(Buffer *statements, const char *sql,
+                              const Value *params, size_t param_count) {
+    if (!append_text(statements, sql, 4) ||
+        !append_uint(statements, param_count, 2)) {
+        return 0;
+    }
+    for (size_t i = 0; i < param_count; i++) {
+        if (!append_value(statements, &params[i])) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+int protocol_write_unit(Buffer *out, const Buffer *statements, size_t count) {
+    size_t start;
+
+    if (!begin_message(out, MESSAGE_UNIT, &start) ||
+        !append_uint(out, count, 4) ||
+        !buffer_append(out, statements->data, statements->length)) {
         return 0;
     }
     end_message(out, start);

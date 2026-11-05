@@ -87,7 +87,8 @@ static void take_message(Server *server, Connection *conn) {
     unsigned char type;
     size_t body_length;
 
-    switch (protocol_next_frame(&conn->in, &type, &body_length)) {
+    switch (protocol_next_frame(&conn->in, PROTOCOL_MAX_BODY, &type,
+                                &body_length)) {
         case FRAME_INCOMPLETE:
             return;
         case FRAME_TOO_BIG:
@@ -237,7 +238,8 @@ static void serve_query(Server *server, Connection *conn) {
     Buffer reply;
 
     // take_message saw the whole message, so it's FRAME_READY.
-    (void)protocol_next_frame(&conn->in, &type, &body_length);
+    (void)protocol_next_frame(&conn->in, PROTOCOL_MAX_BODY, &type,
+                              &body_length);
     buffer_init(&reply);
 
     int written = run_query(server, conn,
