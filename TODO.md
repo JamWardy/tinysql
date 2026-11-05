@@ -61,12 +61,12 @@ Done:
 
 Next, roughly in order, towards a toy online shop (see "Goal" below):
 
-- [ ] A server that links `libtinysql.a`, with a wire protocol for
+- [x] A server that links `libtinysql.a`, with a wire protocol for
       statements, parameters and results, as `../DESIGN.md` describes
       it under "Key decisions". Errors carry a code as well as the
       message, so a service can tell a broken `UNIQUE` constraint
       (its `409`, or an order's retry) from any other failure
-- [ ] Lock the database file while it's open, so a second process
+- [x] Lock the database file while it's open, so a second process
       can't open it, as `../DESIGN.md` describes under "Key decisions"
 - [ ] Replication, for search's read replica, as `../DESIGN.md`
       describes it
