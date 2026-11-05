@@ -7,3 +7,4 @@
 # Database files
 *.db
 *.db.tmp
+*.db.lock

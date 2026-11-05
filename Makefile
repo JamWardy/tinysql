@@ -8,9 +8,10 @@ CFLAGS = -std=c11 -Wall -Wextra -Wpedantic -g -Isrc
 LIB_SRCS = src/tinysql.c src/tokeniser.c src/result.c src/error.c \
            src/text.c src/value.c src/like.c \
            $(STORAGE_SRCS) $(PARSER_SRCS) $(EXECUTOR_SRCS)
-# Tables in memory, their indexes, and the file they're saved to.
+# Tables in memory, their indexes, the file they're saved to and its lock.
 STORAGE_SRCS = src/storage/table.c src/storage/index.c src/storage/btree.c \
-               src/storage/persist.c src/storage/transaction.c
+               src/storage/persist.c src/storage/transaction.c \
+               src/storage/lock.c
 # The parser, one file per statement plus what they share.
 PARSER_SRCS = src/parser/parser.c src/parser/common.c \
               src/parser/expr.c src/parser/deparse.c \

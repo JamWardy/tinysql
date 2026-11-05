@@ -8,6 +8,9 @@
 //   Result result;
 //   Error error;
 //
+//   DatabaseLock lock;
+//   if (!database_lock("shop.db", &lock, &error)) { ... }
+//
 //   database_init(&db);
 //   if (!database_load(&db, "shop.db", &error)) { ... }
 //
@@ -21,6 +24,7 @@
 //   result_free(&result);
 //
 //   database_free(&db);
+//   database_unlock(&lock);
 //
 // TinySQL isn't safe to use from several threads at once: statements
 // are parsed into one shared buffer.
@@ -28,6 +32,7 @@
 #include <stddef.h>
 
 #include "error.h"
+#include "storage/lock.h"     // For database_lock.
 #include "storage/persist.h"  // For database_load.
 #include "result.h"
 #include "storage/table.h"    // For Database, database_init and database_free.

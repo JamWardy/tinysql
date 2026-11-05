@@ -26,6 +26,7 @@ int main(int argc, char **argv) {
     Error error;
     Database db;
     const char *path = NULL;  // NULL: keep the database in memory only.
+    DatabaseLock lock;
 
     if (argc > 2) {
         fprintf(stderr, "Usage: %s [database-file]\n", argv[0]);
@@ -38,6 +39,10 @@ int main(int argc, char **argv) {
     // database would overwrite the file at the first change.
     if (argc == 2) {
         path = argv[1];
+        if (!database_lock(path, &lock, &error)) {
+            fprintf(stderr, "Error: %s\n", error.message);
+            return 1;
+        }
         if (!database_load(&db, path, &error)) {
             fprintf(stderr, "Error: cannot load '%s': %s\n", path,
                     error.message);
@@ -69,5 +74,8 @@ int main(int argc, char **argv) {
     }
 
     database_free(&db);
+    if (path) {
+        database_unlock(&lock);
+    }
     return 0;
 }
