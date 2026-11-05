@@ -20,7 +20,7 @@ functions we call, [GRAMMAR.md](GRAMMAR.md) for the SQL we accept, and
   as `select_rows` and `execute_update` do. A bad statement then fails
   with nothing half done.
 - **Extract a pattern the third time you write it.** That's how
-  `common_find_column`, `common_find_table`, `common_check_type`, `fail`
+  `require_column`, `require_table`, `check_type`, `fail`
   and `copy_text` came about. Name the helper after what it means, not how it works.
 - **`static` unless another file needs it.** A public function goes in
   the header.
@@ -32,7 +32,7 @@ A function that can fail does one of two things:
 | It produces | Returns | On failure |
 |---|---|---|
 | A yes or no, or results through out parameters | `int`: 1 for success | Returns 0 after writing a message to `char *error, size_t error_size` |
-| One pointer | The pointer | Returns `NULL`, after writing a message if it takes an `error` buffer (`common_find_table`) |
+| One pointer | The pointer | Returns `NULL`, after writing a message if it takes an `error` buffer (`require_table`) |
 
 - **Write errors with `fail`**, which is one line:
   `return fail(error, error_size, "no such table '%s'", name);`.
@@ -124,6 +124,29 @@ reasoning. In short:
   `TOKEN_`, `CMP_`).
 - Public functions start with what they act on, where there is one:
   `database_find_table`, `table_append_row`.
+- **Name a thing by its role, not its shape or mechanism.** Say what it's
+  for: `find_indexable_conditions` collects the parts of a `WHERE` an
+  index can use, where `find_bounds` only said they're `=`, `<` and `>`.
+- **Make it distinct from its nearest neighbour.** Where two things
+  could be confused, the names should show the difference: the
+  `Filter` is the whole `WHERE`; the indexable conditions are the part
+  an index can use.
+- **Use the real-world term where there is one,** such as Postgres's
+  "filter", "selectivity" or "seq scan", so what's learnt here carries
+  over.
+- **Keep matching names matching.** A function and the type it fills
+  share a word: `find_indexable_conditions` fills `IndexableConditions`.
+- **Name a thing for everything it holds,** not one part of it or the
+  end result. The plans being chosen from are `CandidatePlans`, not
+  `PlanChoice`, as they're mostly the options. Read the name where it's
+  used: `candidates->plans[i]` reads naturally. Collections get plural
+  names, single items singular ones.
+- **One word, one meaning,** within a part of the code. A new name
+  doesn't take a word already used for something else nearby, as
+  "candidates" for rows once plans were called candidates.
+- **Shared functions are named for what they do,** not for the file
+  they're in: `choose_plan`, not `plan_choose`. A function's file is a
+  Cmd-click away, so the name doesn't need to say it.
 - Header guards are `TINYSQL_<FILE>_H`, or `TINYSQL_<FOLDER>_<FILE>_H`
   in a folder.
 - Includes: the file's own header, then `<system>` headers, then
@@ -137,9 +160,7 @@ reasoning. In short:
   picks the statement's function. `src/executor.h` is the folder's only
   public header; `internal.h` is shared between the folder's files and
   is included nowhere else. It counts as each file's own header, so
-  goes first. A function shared between files starts with its file's
-  name (`where_resolve`, `common_find_table`), except the statements'
-  `execute_create`, `execute_select` and so on.
+  goes first.
 - **The parser is a folder too**, `src/parser/`, laid out the same way:
   one file per statement, `expr.c` for expressions (and `WHERE`),
   `deparse.c` for turning them back into SQL, `common.c` for reading

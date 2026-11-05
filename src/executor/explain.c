@@ -35,7 +35,7 @@ static void find_where(const Statement *stmt, int *has_where, int *where) {
 }
 
 // Writes a range's operators, e.g. ">" or ">= and <".
-static void write_range(char *out, size_t size, const ColumnBounds *b) {
+static void write_range(char *out, size_t size, const IndexableConditions *b) {
     const char *lower = b->lower_inclusive ? ">=" : ">";
     const char *upper = b->upper_inclusive ? "<=" : "<";
 
@@ -92,18 +92,18 @@ static void describe(const Table *table, const Plan *plan, char *out,
     }
 }
 
-static long long whole(double estimate) {
+static long long round_estimate(double estimate) {
     return (long long)(estimate + 0.5);
 }
 
 int execute_explain(Database *db, const Statement *stmt,
                     const ParamList *params, Result *result,
                     char *error, size_t error_size) {
-    Table *table = common_find_table(db, stmt->table_name, error, error_size);
+    Table *table = require_table(db, stmt->table_name, error, error_size);
     ExprContext ctx;
     Filter filter;
     const Filter *where;
-    PlanChoice choice;
+    CandidatePlans candidates;
     int has_where;
     int root;
 
@@ -118,7 +118,7 @@ int execute_explain(Database *db, const Statement *stmt,
         return 0;
     }
 
-    plan_choose(table, where, &choice);
+    choose_plan(table, where, &candidates);
 
     result_add_column(result, "plan", TYPE_TEXT);
     result_add_column(result, "reads", TYPE_INT);
@@ -126,8 +126,8 @@ int execute_explain(Database *db, const Statement *stmt,
     result_add_column(result, "chosen", TYPE_TEXT);
     result_add_column(result, "matches", TYPE_INT);
 
-    for (size_t i = 0; i < choice.count; i++) {
-        const Plan *plan = &choice.plans[i];
+    for (size_t i = 0; i < candidates.count; i++) {
+        const Plan *plan = &candidates.plans[i];
         char text[256];
         Value row[5];
 
@@ -135,13 +135,13 @@ int execute_explain(Database *db, const Statement *stmt,
         row[0].type = TYPE_TEXT;
         row[0].as.text = text;
         row[1].type = TYPE_INT;
-        row[1].as.integer = whole(plan->reads);
+        row[1].as.integer = round_estimate(plan->reads);
         row[2].type = TYPE_INT;
-        row[2].as.integer = whole(plan->cost);
+        row[2].as.integer = round_estimate(plan->cost);
         row[3].type = TYPE_TEXT;
-        row[3].as.text = i == choice.chosen ? "yes" : "";
+        row[3].as.text = i == candidates.chosen ? "yes" : "";
         row[4].type = TYPE_INT;
-        row[4].as.integer = whole(choice.matches);
+        row[4].as.integer = round_estimate(candidates.matches);
 
         if (!result_append_row(result, row)) {
             return fail(error, error_size, "out of memory");

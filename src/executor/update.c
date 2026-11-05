@@ -89,8 +89,8 @@ static int check_key_after_update(const Table *table,
         size_t other;
 
         if (index_find(&seen, hash, updated_row_has_key, &search, &other)) {
-            ok = common_fail_duplicate(table, constraint, after,
-                                       error, error_size);
+            ok = fail_duplicate(table, constraint, after,
+                                error, error_size);
         } else {
             index_insert(&seen, hash, r);
         }
@@ -155,13 +155,13 @@ static int resolve_changes(ExprContext *ctx, const UpdateStatement *update,
         const Assignment *assign = &update->assignments[i];
         size_t index;
 
-        if (!common_find_column(table, assign->column, &index,
-                                error, error_size) ||
+        if (!require_column(table, assign->column, &index,
+                            error, error_size) ||
             !expr_resolve(ctx, assign->value, EXPR_COLUMNS, "SET",
                           error, error_size) ||
-            !common_check_type(&table->columns[index],
-                               ctx->types[assign->value], "value",
-                               error, error_size)) {
+            !check_type(&table->columns[index],
+                        ctx->types[assign->value], "value",
+                        error, error_size)) {
             return 0;
         }
 
@@ -203,7 +203,7 @@ static int compute_changes(const ExprContext *ctx,
 
             if (!expr_evaluate(ctx, changes->exprs[c], row, value,
                                error, error_size) ||
-                !common_check_value(column, value->type, error, error_size)) {
+                !check_value(column, value->type, error, error_size)) {
                 return 0;
             }
         }
@@ -240,7 +240,7 @@ int execute_update(Database *db, const Statement *stmt,
                    const ParamList *params, Result *result,
                    char *error, size_t error_size) {
     const UpdateStatement *update = &stmt->as.update;
-    Table *table = common_find_table(db, stmt->table_name, error, error_size);
+    Table *table = require_table(db, stmt->table_name, error, error_size);
 
     if (!table) {
         return 0;

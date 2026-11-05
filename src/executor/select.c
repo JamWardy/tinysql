@@ -41,7 +41,7 @@ static int resolve_limit(const SelectStatement *select,
         return 1;
     }
 
-    Value value = common_literal_to_value(&select->limit, params);
+    Value value = literal_to_value(&select->limit, params);
 
     if (value.type != TYPE_INT) {
         return fail(error, error_size,
@@ -215,8 +215,8 @@ int execute_select(Database *db, const Statement *stmt,
                    const ParamList *params, Result *result,
                    char *error, size_t error_size) {
     const SelectStatement *select = &stmt->as.select;
-    const Table *table = common_find_table(db, stmt->table_name,
-                                           error, error_size);
+    const Table *table = require_table(db, stmt->table_name,
+                                       error, error_size);
 
     if (!table) {
         return 0;

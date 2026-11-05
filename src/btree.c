@@ -182,7 +182,7 @@ static size_t slot_in_leaf(const BTree *tree, const BTreeNode *leaf,
 }
 
 // Whether an entry with this key comes before what btree_seek_first wants.
-static int before_target(const Value *key, const Value *probe,
+static int before_seek_start(const Value *key, const Value *probe,
                          size_t prefix_width, int inclusive) {
     int c = compare_prefix(key, probe, prefix_width);
     return inclusive ? c < 0 : c <= 0;
@@ -201,7 +201,7 @@ static void find_first(const BTree *tree, const Value *probe,
         size_t i = 0;
 
         while (i < node->count &&
-               before_target(key_at(tree, node, i), probe, prefix_width,
+               before_seek_start(key_at(tree, node, i), probe, prefix_width,
                              inclusive)) {
             i++;
         }
@@ -210,7 +210,7 @@ static void find_first(const BTree *tree, const Value *probe,
 
     size_t i = 0;
     while (i < node->count &&
-           before_target(key_at(tree, node, i), probe, prefix_width,
+           before_seek_start(key_at(tree, node, i), probe, prefix_width,
                          inclusive)) {
         i++;
     }

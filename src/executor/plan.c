@@ -17,7 +17,8 @@
 #define COST_READ 1.0
 #define COST_INDEX 4.0
 
-static void find_bounds(const Filter *filter, int node, ColumnBounds *bounds) {
+static void find_indexable_conditions(const Filter *filter, int node,
+                                      IndexableConditions *indexable) {
     const ExprContext *ctx = filter->ctx;
     const ExprNode *n = &ctx->nodes[node];
 
@@ -30,8 +31,8 @@ static void find_bounds(const Filter *filter, int node, ColumnBounds *bounds) {
     int right = n->as.op.right;
 
     if (op == OP_AND) {
-        find_bounds(filter, left, bounds);
-        find_bounds(filter, right, bounds);
+        find_indexable_conditions(filter, left, indexable);
+        find_indexable_conditions(filter, right, indexable);
         return;
     }
 
@@ -59,7 +60,7 @@ static void find_bounds(const Filter *filter, int node, ColumnBounds *bounds) {
         return;
     }
 
-    ColumnBounds *b = &bounds[ctx->columns[column]];
+    IndexableConditions *b = &indexable[ctx->columns[column]];
 
     switch (op) {
         case OP_EQUAL:
@@ -138,7 +139,7 @@ static double estimate(const ExprContext *ctx, int node) {
 
 // rows times fraction, but at least 1 if the table has any rows, as
 // Postgres rounds estimates, so a guess never says a lookup is free.
-static double some_rows(size_t rows, double fraction) {
+static double estimate_rows(size_t rows, double fraction) {
     double estimate = (double)rows * fraction;
 
     if (rows == 0) {
@@ -147,9 +148,9 @@ static double some_rows(size_t rows, double fraction) {
     return estimate < 1.0 ? 1.0 : estimate;
 }
 
-static void add_plan(PlanChoice *choice, PlanKind kind, double reads,
+static void add_plan(CandidatePlans *candidates, PlanKind kind, double reads,
                      double cost_per_row) {
-    Plan *plan = &choice->plans[choice->count++];
+    Plan *plan = &candidates->plans[candidates->count++];
 
     plan->kind = kind;
     plan->constraint = NULL;
@@ -161,40 +162,41 @@ static void add_plan(PlanChoice *choice, PlanKind kind, double reads,
 }
 
 // Each finds at most one row, through the key's hash index.
-static void add_key_plans(const Table *table, PlanChoice *choice) {
+static void add_key_plans(const Table *table, CandidatePlans *candidates) {
     for (size_t c = 0; c < table->constraint_count; c++) {
         const ColumnList *key = &table->constraints[c].columns;
         size_t i = 0;
 
-        while (i < key->count && choice->bounds[key->positions[i]].equal >= 0) {
+        while (i < key->count &&
+               candidates->indexable[key->positions[i]].equal >= 0) {
             i++;
         }
         if (i == key->count) {
-            add_plan(choice, PLAN_KEY, table->row_count > 0 ? 1.0 : 0.0,
+            add_plan(candidates, PLAN_KEY, table->row_count > 0 ? 1.0 : 0.0,
                      COST_INDEX);
-            choice->plans[choice->count - 1].constraint =
+            candidates->plans[candidates->count - 1].constraint =
                 &table->constraints[c];
         }
     }
 }
 
-// For each index whose leading columns the WHERE pins with =, or whose first
-// unpinned column it bounds.
-static void add_index_plans(const Table *table, PlanChoice *choice) {
+// For each index whose leading columns the WHERE pins with =, or with a range
+// on its first unpinned column.
+static void add_index_plans(const Table *table, CandidatePlans *candidates) {
     for (size_t i = 0; i < table->index_count; i++) {
         const TreeIndex *index = &table->indexes[i];
-        const ColumnBounds *range = NULL;
+        const IndexableConditions *range = NULL;
         double fraction = 1.0;
         size_t k = 0;
 
         while (k < index->columns.count &&
-               choice->bounds[index->columns.positions[k]].equal >= 0) {
+               candidates->indexable[index->columns.positions[k]].equal >= 0) {
             fraction *= DEFAULT_EQUAL;
             k++;
         }
         if (k < index->columns.count) {
-            const ColumnBounds *b =
-                &choice->bounds[index->columns.positions[k]];
+            const IndexableConditions *b =
+                &candidates->indexable[index->columns.positions[k]];
 
             if (b->lower >= 0 || b->upper >= 0) {
                 range = b;
@@ -206,49 +208,52 @@ static void add_index_plans(const Table *table, PlanChoice *choice) {
             continue;
         }
 
-        add_plan(choice, PLAN_INDEX, some_rows(table->row_count, fraction),
+        add_plan(candidates, PLAN_INDEX,
+                 estimate_rows(table->row_count, fraction),
                  COST_INDEX);
-        Plan *plan = &choice->plans[choice->count - 1];
+        Plan *plan = &candidates->plans[candidates->count - 1];
         plan->index = index;
         plan->equal_count = k;
         plan->range = range;
     }
 }
 
-void plan_choose(const Table *table, const Filter *filter,
-                 PlanChoice *choice) {
+void choose_plan(const Table *table, const Filter *filter,
+                 CandidatePlans *candidates) {
     for (size_t c = 0; c < MAX_COLUMNS; c++) {
-        choice->bounds[c].equal = -1;
-        choice->bounds[c].lower = -1;
-        choice->bounds[c].upper = -1;
+        candidates->indexable[c].equal = -1;
+        candidates->indexable[c].lower = -1;
+        candidates->indexable[c].upper = -1;
     }
-    choice->count = 0;
+    candidates->count = 0;
 
     // Reading every row always works, so it's the one to beat.
-    add_plan(choice, PLAN_SCAN, (double)table->row_count, COST_READ);
+    add_plan(candidates, PLAN_SCAN, (double)table->row_count, COST_READ);
 
-    choice->matches = (double)table->row_count;
+    candidates->matches = (double)table->row_count;
     if (filter) {
-        find_bounds(filter, filter->root, choice->bounds);
-        add_key_plans(table, choice);
-        add_index_plans(table, choice);
-        choice->matches = some_rows(table->row_count,
+        find_indexable_conditions(filter, filter->root, candidates->indexable);
+        add_key_plans(table, candidates);
+        add_index_plans(table, candidates);
+        candidates->matches = estimate_rows(table->row_count,
                                     estimate(filter->ctx, filter->root));
     }
 
     // A WHERE that pins down a whole key matches at most its one row.
-    for (size_t i = 1; i < choice->count; i++) {
-        if (choice->plans[i].kind == PLAN_KEY &&
-            choice->matches > choice->plans[i].reads) {
-            choice->matches = choice->plans[i].reads;
+    for (size_t i = 1; i < candidates->count; i++) {
+        if (candidates->plans[i].kind == PLAN_KEY &&
+            candidates->matches > candidates->plans[i].reads) {
+            candidates->matches = candidates->plans[i].reads;
         }
     }
 
     // The cheapest wins; on a tie, the first considered.
-    choice->chosen = 0;
-    for (size_t i = 1; i < choice->count; i++) {
-        if (choice->plans[i].cost < choice->plans[choice->chosen].cost) {
-            choice->chosen = i;
+    candidates->chosen = 0;
+    for (size_t i = 1; i < candidates->count; i++) {
+        const Plan *best = &candidates->plans[candidates->chosen];
+
+        if (candidates->plans[i].cost < best->cost) {
+            candidates->chosen = i;
         }
     }
 }

@@ -6,8 +6,8 @@
 
 #include "error.h"
 
-Table *common_find_table(const Database *db, const char *name,
-                         char *error, size_t error_size) {
+Table *require_table(const Database *db, const char *name,
+                     char *error, size_t error_size) {
     Table *table = database_find_table(db, name);
 
     if (!table) {
@@ -16,8 +16,8 @@ Table *common_find_table(const Database *db, const char *name,
     return table;
 }
 
-int common_check_type(const Column *column, DataType given, const char *what,
-                      char *error, size_t error_size) {
+int check_type(const Column *column, DataType given, const char *what,
+               char *error, size_t error_size) {
     if (given != TYPE_NULL && given != column->type) {
         return fail(error, error_size, "column '%s' is %s but the %s is %s",
              column->name, data_type_name(column->type), what,
@@ -26,28 +26,28 @@ int common_check_type(const Column *column, DataType given, const char *what,
     return 1;
 }
 
-int common_check_value(const Column *column, DataType given,
-                       char *error, size_t error_size) {
+int check_value(const Column *column, DataType given,
+                char *error, size_t error_size) {
     if (given == TYPE_NULL && column->not_null) {
         return fail(error, error_size, "column '%s' can't be NULL",
              column->name);
     }
-    return common_check_type(column, given, "value", error, error_size);
+    return check_type(column, given, "value", error, error_size);
 }
 
-int common_find_column(const Table *table, const char *name, size_t *index,
-                       char *error, size_t error_size) {
+int require_column(const Table *table, const char *name, size_t *index,
+                   char *error, size_t error_size) {
     if (!table_find_column(table, name, index)) {
         return fail(error, error_size, "no such column '%s'", name);
     }
     return 1;
 }
 
-DataType common_literal_type(const Literal *lit, const ParamList *params) {
-    return common_literal_to_value(lit, params).type;
+DataType literal_type(const Literal *lit, const ParamList *params) {
+    return literal_to_value(lit, params).type;
 }
 
-Value common_literal_to_value(const Literal *lit, const ParamList *params) {
+Value literal_to_value(const Literal *lit, const ParamList *params) {
     Value value;
 
     switch (lit->kind) {
@@ -85,8 +85,8 @@ static const char *constraint_name(ConstraintKind kind) {
     return "key";
 }
 
-int common_fail_duplicate(const Table *table, const Constraint *constraint,
-                          const Value *values, char *error, size_t error_size) {
+int fail_duplicate(const Table *table, const Constraint *constraint,
+                   const Value *values, char *error, size_t error_size) {
     const ColumnList *key = &constraint->columns;
     char text[256];  // Cut short if it's long; it's only for the message.
     size_t length = 0;

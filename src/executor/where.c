@@ -95,11 +95,12 @@ static int evaluate_bound(const Filter *filter, int node, Value *out,
 }
 
 // In table order. out->positions has room for every row.
-static int collect_from_index(const Filter *filter, const PlanChoice *choice,
+static int collect_from_index(const Filter *filter,
+                              const CandidatePlans *candidates,
                               const Plan *plan, PositionList *out,
                               char *error, size_t error_size) {
     const TreeIndex *index = plan->index;
-    const ColumnBounds *range = plan->range;
+    const IndexableConditions *range = plan->range;
     size_t k = plan->equal_count;
     Value probe[MAX_COLUMNS];
     Value upper;
@@ -107,7 +108,7 @@ static int collect_from_index(const Filter *filter, const PlanChoice *choice,
     BTreeCursor cursor;
 
     for (size_t i = 0; i < k; i++) {
-        int node = choice->bounds[index->columns.positions[i]].equal;
+        int node = candidates->indexable[index->columns.positions[i]].equal;
 
         if (!evaluate_bound(filter, node, &probe[i], &none,
                             error, error_size)) {
@@ -154,7 +155,7 @@ static int collect_from_index(const Filter *filter, const PlanChoice *choice,
 
 // A NULL finds nothing.
 static int find_by_key(const Table *table, const Filter *filter,
-                       const PlanChoice *choice, const Plan *plan,
+                       const CandidatePlans *candidates, const Plan *plan,
                        size_t *row, int *found,
                        char *error, size_t error_size) {
     const ColumnList *key = &plan->constraint->columns;
@@ -164,7 +165,7 @@ static int find_by_key(const Table *table, const Filter *filter,
         size_t column = key->positions[i];
         int none = 0;
 
-        if (!evaluate_bound(filter, choice->bounds[column].equal,
+        if (!evaluate_bound(filter, candidates->indexable[column].equal,
                             &values[column], &none, error, error_size)) {
             return 0;
         }
@@ -176,11 +177,11 @@ static int find_by_key(const Table *table, const Filter *filter,
 
 int where_collect_positions(const Table *table, const Filter *filter,
                             PositionList *out, char *error, size_t error_size) {
-    PlanChoice choice;
+    CandidatePlans candidates;
 
-    plan_choose(table, filter, &choice);
+    choose_plan(table, filter, &candidates);
 
-    const Plan *plan = &choice.plans[choice.chosen];
+    const Plan *plan = &candidates.plans[candidates.chosen];
     int ok = 1;
 
     out->positions = malloc(table->row_count * sizeof(*out->positions));
@@ -201,7 +202,7 @@ int where_collect_positions(const Table *table, const Filter *filter,
             size_t r;
             int found;
 
-            ok = find_by_key(table, filter, &choice, plan, &r, &found,
+            ok = find_by_key(table, filter, &candidates, plan, &r, &found,
                              error, error_size);
             if (ok && found) {
                 out->positions[out->count++] = r;
@@ -209,12 +210,12 @@ int where_collect_positions(const Table *table, const Filter *filter,
             break;
         }
         case PLAN_INDEX:
-            ok = collect_from_index(filter, &choice, plan, out,
+            ok = collect_from_index(filter, &candidates, plan, out,
                                     error, error_size);
             break;
     }
 
-    // Every way finds candidates; the whole WHERE decides which match.
+    // Every plan finds possible rows; the whole WHERE decides which match.
     size_t kept = 0;
     int matches;
 

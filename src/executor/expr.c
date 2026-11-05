@@ -181,8 +181,8 @@ static int resolve_node(ExprContext *ctx, int node, int allowed,
 
     switch (n->kind) {
         case EXPR_LITERAL:
-            ctx->types[node] = common_literal_type(&n->as.literal,
-                                                   ctx->params);
+            ctx->types[node] = literal_type(&n->as.literal,
+                                            ctx->params);
             return 1;
 
         case EXPR_COLUMN:
@@ -195,8 +195,8 @@ static int resolve_node(ExprContext *ctx, int node, int allowed,
                 return fail(error, error_size, "can't use column '%s' in %s",
                             n->as.column, place);
             }
-            if (!common_find_column(ctx->table, n->as.column,
-                                    &ctx->columns[node], error, error_size)) {
+            if (!require_column(ctx->table, n->as.column,
+                                &ctx->columns[node], error, error_size)) {
                 return 0;
             }
             ctx->types[node] = ctx->table->columns[ctx->columns[node]].type;
@@ -444,7 +444,7 @@ int expr_evaluate(const ExprContext *ctx, int node, const Row *row,
 
     switch (n->kind) {
         case EXPR_LITERAL:
-            *out = common_literal_to_value(&n->as.literal, ctx->params);
+            *out = literal_to_value(&n->as.literal, ctx->params);
             return 1;
 
         case EXPR_COLUMN:

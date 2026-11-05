@@ -99,33 +99,33 @@ int select_append_row(const ExprContext *ctx, const SelectList *list,
 
 // common.c: lookups and checks most statements need.
 
-Table *common_find_table(const Database *db, const char *name,
-                         char *error, size_t error_size);
+Table *require_table(const Database *db, const char *name,
+                     char *error, size_t error_size);
 
 // NULL can go in any column. what names the value in the message, e.g. "WHERE
 // value".
-int common_check_type(const Column *column, DataType given, const char *what,
-                      char *error, size_t error_size);
+int check_type(const Column *column, DataType given, const char *what,
+               char *error, size_t error_size);
 
-// As common_check_type, but also refuses NULL in a NOT NULL column, for INSERT
-// and UPDATE. A WHERE uses common_check_type, as IS NULL is fine on any column.
-int common_check_value(const Column *column, DataType given,
-                       char *error, size_t error_size);
+// As check_type, but also refuses NULL in a NOT NULL column, for INSERT
+// and UPDATE. A WHERE uses check_type, as IS NULL is fine on any column.
+int check_value(const Column *column, DataType given,
+                char *error, size_t error_size);
 
-int common_find_column(const Table *table, const char *name, size_t *index,
-                       char *error, size_t error_size);
+int require_column(const Table *table, const char *name, size_t *index,
+                   char *error, size_t error_size);
 
 // Its own, or for a `?` its parameter's.
-DataType common_literal_type(const Literal *lit, const ParamList *params);
+DataType literal_type(const Literal *lit, const ParamList *params);
 
 // Its own, or for a `?` its parameter's. Its text points into lit or the
 // parameter, so it's only for functions that copy it.
-Value common_literal_to_value(const Literal *lit, const ParamList *params);
+Value literal_to_value(const Literal *lit, const ParamList *params);
 
 // e.g. "duplicate primary key in table 'users': id = 5". values is laid out
 // like a row.
-int common_fail_duplicate(const Table *table, const Constraint *constraint,
-                          const Value *values, char *error, size_t error_size);
+int fail_duplicate(const Table *table, const Constraint *constraint,
+                   const Value *values, char *error, size_t error_size);
 
 // expr.c: checking and evaluating expressions.
 
@@ -163,7 +163,7 @@ typedef struct {
     int lower_inclusive;  // 1 for >=.
     int upper;            // e's node in `c < e` or `c <= e`, or -1.
     int upper_inclusive;  // 1 for <=.
-} ColumnBounds;
+} IndexableConditions;
 
 typedef enum {
     PLAN_SCAN,   // Read every row.
@@ -176,9 +176,9 @@ typedef struct {
     PlanKind kind;
     const Constraint *constraint;  // PLAN_KEY's key, whose every column
                                    // the WHERE pins with =.
-    const TreeIndex *index;        // PLAN_INDEX's index,
-    size_t equal_count;            // how many leading columns are pinned
-    const ColumnBounds *range;     // and the next column's bounds, or NULL.
+    const TreeIndex *index;        // PLAN_INDEX's index, how many of its
+    size_t equal_count;            // leading columns are pinned, and its
+    const IndexableConditions *range;  // next column's conditions, or NULL.
     double reads;                  // Estimated rows read.
     double cost;
 } Plan;
@@ -186,18 +186,18 @@ typedef struct {
 // Reading every row, then a plan per key and per index at most.
 #define MAX_PLANS (1 + MAX_KEYS + MAX_INDEXES)
 
-// Plans point into bounds, so a PlanChoice mustn't be copied.
+// Plans point into indexable, so a CandidatePlans mustn't be copied.
 typedef struct {
-    ColumnBounds bounds[MAX_COLUMNS];  // Per column of the table.
+    IndexableConditions indexable[MAX_COLUMNS];  // Per column of the table.
     Plan plans[MAX_PLANS];             // plans[0] reads every row.
     size_t count;
     size_t chosen;
     double matches;  // Estimated rows the whole WHERE matches.
-} PlanChoice;
+} CandidatePlans;
 
 // filter may be NULL, for every row. Reads no rows and evaluates nothing.
-void plan_choose(const Table *table, const Filter *filter,
-                 PlanChoice *choice);
+void choose_plan(const Table *table, const Filter *filter,
+                 CandidatePlans *candidates);
 
 // where.c: checking a WHERE and finding the rows it matches.
 
@@ -207,7 +207,7 @@ void plan_choose(const Table *table, const Filter *filter,
 int where_resolve(ExprContext *ctx, int has_where, int root, Filter *filter,
                   const Filter **out, char *error, size_t error_size);
 
-// In table order, by the plan plan_choose picks.
+// In table order, by the plan choose_plan picks.
 int where_collect_positions(const Table *table, const Filter *filter,
                             PositionList *out, char *error, size_t error_size);
 
