@@ -17,6 +17,6 @@ typedef struct {
 int database_lock(const char *path, DatabaseLock *lock, Error *error);
 
 // The lock is released anyway when the process exits, however it exits.
-void database_unlock(DatabaseLock *lock);
+void database_unlock(const DatabaseLock *lock);
 
 #endif

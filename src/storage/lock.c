@@ -85,7 +85,6 @@ int database_lock(const char *path, DatabaseLock *lock, Error *error) {
     return 1;
 }
 
-void database_unlock(DatabaseLock *lock) {
+void database_unlock(const DatabaseLock *lock) {
     close(lock->fd);  // Closing releases the flock.
-    lock->fd = -1;
 }
