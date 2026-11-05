@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "btree.h"
 #include "index.h"
 #include "parser.h"  // For DataType, ColumnDef and ConstraintKind.
 #include "value.h"
@@ -47,6 +48,17 @@ typedef struct {
     Index rows_by_key;   // Each row's position, under its key's hash.
 } Constraint;
 
+// Most B-tree indexes a table can have, from CREATE INDEX.
+#define MAX_INDEXES 16
+
+// An index made by CREATE INDEX: a B-tree with an entry for every row,
+// keyed by a copy of the row's values in columns, in order.
+typedef struct {
+    char *name;
+    ColumnList columns;
+    BTree tree;
+} TreeIndex;
+
 typedef struct {
     char *name;
     Column *columns;
@@ -54,6 +66,9 @@ typedef struct {
 
     Constraint *constraints;  // NULL when there are none.
     size_t constraint_count;
+
+    TreeIndex indexes[MAX_INDEXES];  // In the order they were created.
+    size_t index_count;
 
     Row *rows;
     size_t row_count;
@@ -98,6 +113,12 @@ Table *database_create_table(Database *db, const char *name,
 // down one place.
 void database_drop_table(Database *db, Table *table);
 
+// Looks for the CREATE INDEX index with exactly this name, in any table.
+// If there is one, sets *table and *index to its table's position in db
+// and its own in the table, and returns 1; otherwise returns 0.
+int database_find_index(const Database *db, const char *name,
+                        size_t *table, size_t *index);
+
 // Looks for the column with exactly this name. If there is one, sets
 // *index to its position and returns 1; otherwise returns 0.
 int table_find_column(const Table *table, const char *name, size_t *index);
@@ -113,6 +134,16 @@ int table_add_constraint(Table *table, ConstraintKind kind,
 // If table chooses IDs, sets *column to the position of its PRIMARY
 // KEY's one column and returns 1; otherwise returns 0.
 int table_autoincrement_column(const Table *table, size_t *column);
+
+// Adds an index called name over columns, which must be valid, distinct
+// positions, with an entry for every row. The table must have fewer
+// than MAX_INDEXES; the executor checks the name is free.
+// Returns 1, or 0 if memory ran out (table is unchanged).
+int table_add_index(Table *table, const char *name,
+                    const ColumnList *columns);
+
+// Frees the index at position index and moves later ones down.
+void table_drop_index(Table *table, size_t index);
 
 // Looks for a row with the same key as values. If there is one, sets
 // *row to its position and returns 1; otherwise returns 0, as it always
@@ -141,8 +172,8 @@ int key_equal(const ColumnList *key, const Value *a, const Value *b);
 
 // Appends a row with copies of values, which must hold column_count
 // values, each NULL or of its column's type, and no key already in the
-// table; the caller validates first. Adds the row to every index, and
-// raises last_id to an ID above it.
+// table; the caller validates first. Adds the row to every index, hash
+// and B-tree, and raises last_id to an ID above it.
 // Returns 1, or 0 if memory ran out (table is unchanged).
 int table_append_row(Table *table, const Value *values);
 
@@ -156,7 +187,7 @@ int table_set_value(Table *table, size_t row, size_t column,
                     const Value *value);
 
 // Frees the row at index and moves every later row down one place, so
-// the rest keep their order, and updates the indexes to match. index
+// the rest keep their order, and updates every index to match. index
 // must be less than row_count.
 void table_delete_row(Table *table, size_t index);
 

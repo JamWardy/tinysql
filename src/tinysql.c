@@ -25,6 +25,8 @@ static int update_file(Database *db, const char *path, StatementType type,
         case STMT_DELETE:
         case STMT_UPDATE:
         case STMT_DROP:
+        case STMT_CREATE_INDEX:
+        case STMT_DROP_INDEX:
             return transaction_autocommit(db, path, error, error_size);
     }
 

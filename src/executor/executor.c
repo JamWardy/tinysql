@@ -26,6 +26,10 @@ static int execute_statement(Database *db, const Statement *stmt,
                                   error, error_size);
         case STMT_DROP:
             return execute_drop(db, stmt, error, error_size);
+        case STMT_CREATE_INDEX:
+            return execute_create_index(db, stmt, error, error_size);
+        case STMT_DROP_INDEX:
+            return execute_drop_index(db, stmt, error, error_size);
         case STMT_BEGIN:
         case STMT_COMMIT:
         case STMT_ROLLBACK:

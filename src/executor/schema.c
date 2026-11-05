@@ -100,13 +100,28 @@ static int fail_same_key(const CreateStatement *create, const ColumnList *key,
     return fail(error, error_size, "key (%s) is declared twice", text);
 }
 
+// Tables and indexes share one set of names, as in Postgres and SQLite.
+// Fails if a table or an index already has name.
+static int check_name_free(const Database *db, const char *name,
+                           char *error, size_t error_size) {
+    size_t table;
+    size_t index;
+
+    if (database_find_table(db, name)) {
+        return fail(error, error_size, "table '%s' already exists", name);
+    }
+    if (database_find_index(db, name, &table, &index)) {
+        return fail(error, error_size, "index '%s' already exists", name);
+    }
+    return 1;
+}
+
 int execute_create(Database *db, const Statement *stmt,
                    char *error, size_t error_size) {
     const CreateStatement *create = &stmt->as.create;
 
-    if (database_find_table(db, stmt->table_name)) {
-        return fail(error, error_size, "table '%s' already exists",
-                    stmt->table_name);
+    if (!check_name_free(db, stmt->table_name, error, error_size)) {
+        return 0;
     }
 
     for (int i = 0; i < create->column_count; i++) {
@@ -154,6 +169,56 @@ int execute_create(Database *db, const Statement *stmt,
 
     table->autoincrement = create->has_autoincrement;
 
+    return 1;
+}
+
+int execute_create_index(Database *db, const Statement *stmt,
+                         char *error, size_t error_size) {
+    const CreateIndexStatement *create = &stmt->as.create_index;
+    Table *table = common_find_table(db, stmt->table_name, error, error_size);
+    ColumnList columns;
+
+    if (!table || !check_name_free(db, create->name, error, error_size)) {
+        return 0;
+    }
+    if (table->index_count == MAX_INDEXES) {
+        return fail(error, error_size, "too many indexes on table '%s' "
+                    "(max %d)", table->name, MAX_INDEXES);
+    }
+
+    columns.count = (size_t)create->column_count;
+    for (size_t i = 0; i < columns.count; i++) {
+        const char *name = create->columns[i];
+
+        if (!common_find_column(table, name, &columns.positions[i],
+                                error, error_size)) {
+            return 0;
+        }
+        for (size_t j = 0; j < i; j++) {
+            if (columns.positions[j] == columns.positions[i]) {
+                return fail(error, error_size,
+                            "column '%s' is in the index twice", name);
+            }
+        }
+    }
+
+    if (!table_add_index(table, create->name, &columns)) {
+        return fail(error, error_size, "out of memory");
+    }
+    return 1;
+}
+
+int execute_drop_index(Database *db, const Statement *stmt,
+                       char *error, size_t error_size) {
+    size_t table;
+    size_t index;
+
+    if (!database_find_index(db, stmt->index_name, &table, &index)) {
+        return fail(error, error_size, "no such index '%s'",
+                    stmt->index_name);
+    }
+
+    table_drop_index(&db->tables[table], index);
     return 1;
 }
 

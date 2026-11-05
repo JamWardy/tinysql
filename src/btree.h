@@ -17,9 +17,9 @@
 // The tree owns copies of its keys. Like index.c, it knows nothing about
 // tables: the caller passes in each key.
 
-// Most entries in a leaf, and most separators in an inner node. A build
-// with -DBTREE_ORDER=4 makes splits and merges happen often, for trying
-// them out.
+// Most entries in a leaf, and most separators in an inner node, at least
+// 4. A build with -DBTREE_ORDER=4 makes splits and merges happen often,
+// for trying them out.
 #ifndef BTREE_ORDER
 #define BTREE_ORDER 32
 #endif
@@ -51,9 +51,11 @@ void btree_free(BTree *tree);
 // Returns 1, or 0 if memory ran out (tree is unchanged).
 int btree_insert(BTree *tree, const Value *key, size_t row);
 
-// Removes the entry with key and row, which must be in the tree.
-// Returns 1, or 0 if memory ran out (tree is unchanged).
-int btree_remove(BTree *tree, const Value *key, size_t row);
+// Removes the entry with key and row, which must be in the tree. If
+// memory runs out for the copy a borrow needs, the leaf merges with a
+// neighbour if they fit, or is left under half full, which is still a
+// correct tree, so this can't fail.
+void btree_remove(BTree *tree, const Value *key, size_t row);
 
 // Moves every row position after removed down by one, to follow the
 // rows when the row at removed is deleted and the ones after it move

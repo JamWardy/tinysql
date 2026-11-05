@@ -53,11 +53,15 @@ typedef struct {
 // the statement's type. Each takes the statement and the database, and
 // on failure writes a message to error and returns 0.
 
-// schema.c
+// schema.c: CREATE and DROP, of tables and indexes.
 int execute_create(Database *db, const Statement *stmt,
                    char *error, size_t error_size);
 int execute_drop(Database *db, const Statement *stmt,
                  char *error, size_t error_size);
+int execute_create_index(Database *db, const Statement *stmt,
+                         char *error, size_t error_size);
+int execute_drop_index(Database *db, const Statement *stmt,
+                       char *error, size_t error_size);
 
 // insert.c, select.c, delete.c and update.c fill result, and read any
 // `?`s' values from params.

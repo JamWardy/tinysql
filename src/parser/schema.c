@@ -143,12 +143,61 @@ static int parse_table_key(Parser *p, CreateStatement *create) {
     return expect(p, TOKEN_RPAREN, "',' or ')'") != NULL;
 }
 
+// create_index_stmt = CREATE INDEX IDENTIFIER ON IDENTIFIER
+//                     LPAREN IDENTIFIER { COMMA IDENTIFIER } RPAREN
+// CREATE has been read.
+static int parse_create_index(Parser *p, Statement *out) {
+    CreateIndexStatement *index = &out->as.create_index;
+    const Token *name = expect(p, TOKEN_IDENTIFIER, "index name");
+
+    if (!name) {
+        return 0;
+    }
+    copy_text(index->name, sizeof(index->name), name->text);
+
+    const Token *table = NULL;
+    if (!expect(p, TOKEN_ON, "ON") ||
+        !(table = expect(p, TOKEN_IDENTIFIER, "table name")) ||
+        !expect(p, TOKEN_LPAREN, "'('")) {
+        return 0;
+    }
+
+    index->column_count = 0;
+    do {
+        if (index->column_count == MAX_COLUMNS) {
+            return fail(p->error, sizeof(p->error),
+                        "too many index columns (max %d)", MAX_COLUMNS);
+        }
+
+        const Token *column = expect(p, TOKEN_IDENTIFIER, "column name");
+        if (!column) {
+            return 0;
+        }
+        copy_text(index->columns[index->column_count++],
+                  sizeof(index->columns[0]), column->text);
+    } while (match(p, TOKEN_COMMA));
+
+    if (!expect(p, TOKEN_RPAREN, "',' or ')'")) {
+        return 0;
+    }
+
+    out->type = STMT_CREATE_INDEX;
+    copy_text(out->table_name, sizeof(out->table_name), table->text);
+    return 1;
+}
+
 // create_stmt   = CREATE TABLE IDENTIFIER
 //                 LPAREN table_element { COMMA table_element } RPAREN
+//               | create_index_stmt
 // table_element = column_def | table_key
 int parse_create(Parser *p, Statement *out) {
-    if (!expect(p, TOKEN_CREATE, "CREATE") ||
-        !expect(p, TOKEN_TABLE, "TABLE")) {
+    if (!expect(p, TOKEN_CREATE, "CREATE")) {
+        return 0;
+    }
+    if (match(p, TOKEN_INDEX)) {
+        return parse_create_index(p, out);
+    }
+    if (!expect(p, TOKEN_TABLE, "TABLE or INDEX")) {
         return 0;
     }
 
@@ -191,10 +240,23 @@ int parse_create(Parser *p, Statement *out) {
     return 1;
 }
 
-// drop_stmt = DROP TABLE IDENTIFIER
+// drop_stmt = DROP ( TABLE | INDEX ) IDENTIFIER
 int parse_drop(Parser *p, Statement *out) {
-    if (!expect(p, TOKEN_DROP, "DROP") ||
-        !expect(p, TOKEN_TABLE, "TABLE")) {
+    if (!expect(p, TOKEN_DROP, "DROP")) {
+        return 0;
+    }
+
+    if (match(p, TOKEN_INDEX)) {
+        const Token *index = expect(p, TOKEN_IDENTIFIER, "index name");
+        if (!index) {
+            return 0;
+        }
+        out->type = STMT_DROP_INDEX;
+        copy_text(out->index_name, sizeof(out->index_name), index->text);
+        return 1;
+    }
+
+    if (!expect(p, TOKEN_TABLE, "TABLE or INDEX")) {
         return 0;
     }
 

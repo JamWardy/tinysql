@@ -44,12 +44,13 @@ Done:
 - [x] IDs: `AUTOINCREMENT`, and `INSERT ... RETURNING` to get the new
       ID back, as `GRAMMAR.md` describes under "IDs" and "RETURNING"
       (file format version 6)
+- [x] `CREATE INDEX` and `DROP INDEX`, B+ trees, so `orders (item_id,
+      expires_at)` serves `item_id = ? AND expires_at > ?`, as
+      `GRAMMAR.md` describes under "Indexes" and `INDEXES.md` explains
+      (file format version 7)
 
 Next, roughly in order, towards a toy online shop (see "Goal" below):
 
-- [ ] `CREATE INDEX` on columns that aren't a key, ordered (a B-tree),
-      so `orders (item_id, expires_at)` serves `item_id = ? AND
-      expires_at > ?`; a hash index finds only equal values
 - [ ] `LIKE`, for searching item titles
 - [ ] A server that links `libtinysql.a`, with a wire protocol for
       statements, parameters and results, as `../DESIGN.md` describes

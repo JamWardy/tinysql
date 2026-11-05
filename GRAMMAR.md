@@ -23,6 +23,8 @@ statement     = ( create_stmt | insert_stmt | select_stmt | delete_stmt
 
 create_stmt   = CREATE TABLE IDENTIFIER
                 LPAREN table_element { COMMA table_element } RPAREN
+              | CREATE INDEX IDENTIFIER ON IDENTIFIER
+                LPAREN IDENTIFIER { COMMA IDENTIFIER } RPAREN
 table_element = column_def | table_key
 
 column_def    = IDENTIFIER column_type { column_constraint }
@@ -48,7 +50,7 @@ update_stmt   = UPDATE IDENTIFIER
                 SET assignment { COMMA assignment } [ WHERE expr ]
 assignment    = IDENTIFIER EQUAL expr
 
-drop_stmt     = DROP TABLE IDENTIFIER
+drop_stmt     = DROP ( TABLE | INDEX ) IDENTIFIER
 
 transaction_stmt = BEGIN | COMMIT | ROLLBACK
 
@@ -486,6 +488,52 @@ there when real row locks come.
   aren't accepted.
 - `FOR` is a keyword, so it can't be used as a table or column name.
 
+
+## Indexes
+
+`CREATE INDEX` makes a B-tree index on one or more columns, so a
+`WHERE` on them can find its rows without reading every row:
+
+```sql
+CREATE INDEX orders_item_expires ON orders (item_id, expires_at);
+SELECT SUM(quantity) FROM orders
+WHERE item_id = 5 AND status = 'PENDING' AND expires_at > 1700000000;
+DROP INDEX orders_item_expires;
+```
+
+The index keeps every row's values of its columns in order, first by
+`item_id`, then by `expires_at` among equal `item_id`s, with `NULL`s
+last, as `ORDER BY` sorts. So it can find:
+
+- rows with given values in its first columns: `item_id = 5`, or
+  `item_id = 5 AND expires_at = 100`;
+- and then a range in the next column: `item_id = 5 AND expires_at >
+  100`, with `<`, `<=`, `>` or `>=`, either way round (`100 < expires_at`
+  too), and a bound at each end if wanted.
+
+These count only when the `WHERE` needs them, through `AND`s: under an
+`OR` or `NOT` it can't use them. The index only narrows down which rows
+to read; the whole `WHERE` is still checked on each, so `status =
+'PENDING'` above is checked on the rows the index finds. An index on
+`(item_id, expires_at)` can't help a `WHERE` on `expires_at` alone, as
+those rows are spread through it.
+
+A `WHERE` that pins down a whole `PRIMARY KEY` or `UNIQUE` key with `=`
+uses that key's own index. Otherwise it uses the `CREATE INDEX` index
+with the most leading columns pinned by `=`, preferring one with a range
+on the next column, and the first created on a tie. With none, it reads
+every row.
+
+- Index names share one set of names with tables, as in Postgres and
+  SQLite: no index can have a table's name, nor another index's.
+- A table has at most 16 indexes. Two on the same columns are allowed.
+- An index is built from the rows already there, kept up to date by
+  every `INSERT`, `UPDATE` and `DELETE`, and dropped with its table.
+- `.schema` shows a table's indexes after it.
+- `INDEX` and `ON` are keywords, so they can't be used as table or
+  column names.
+
+See `INDEXES.md` for how the B-tree works.
 ## Keys
 
 A key is one or more columns whose values, together, are different in

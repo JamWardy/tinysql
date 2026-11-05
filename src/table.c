@@ -24,6 +24,11 @@ static void table_free(Table *table) {
     }
     free(table->constraints);
 
+    for (size_t i = 0; i < table->index_count; i++) {
+        btree_free(&table->indexes[i].tree);
+        free(table->indexes[i].name);
+    }
+
     free(table->rows);
     free_columns(table->columns, table->column_count);
     free(table->name);
@@ -112,6 +117,78 @@ void database_drop_table(Database *db, Table *table) {
     memmove(table, table + 1,
             (db->count - index - 1) * sizeof(*table));
     db->count--;
+}
+
+int database_find_index(const Database *db, const char *name,
+                        size_t *table, size_t *index) {
+    for (size_t t = 0; t < db->count; t++) {
+        for (size_t i = 0; i < db->tables[t].index_count; i++) {
+            if (strcmp(db->tables[t].indexes[i].name, name) == 0) {
+                *table = t;
+                *index = i;
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+// Sets key to index's key for a row laid out as values. The key borrows
+// any text from values.
+static void index_key(const TreeIndex *index, const Value *values,
+                      Value *key) {
+    for (size_t i = 0; i < index->columns.count; i++) {
+        key[i] = values[index->columns.positions[i]];
+    }
+}
+
+// Removes row from the first count B-tree indexes, undoing a change that
+// ran out of memory partway. values is laid out like the row.
+static void remove_from_indexes(Table *table, size_t count,
+                                const Value *values, size_t row) {
+    Value key[MAX_COLUMNS];
+
+    for (size_t i = 0; i < count; i++) {
+        index_key(&table->indexes[i], values, key);
+        btree_remove(&table->indexes[i].tree, key, row);
+    }
+}
+
+int table_add_index(Table *table, const char *name,
+                    const ColumnList *columns) {
+    assert(table->index_count < MAX_INDEXES);
+
+    TreeIndex *index = &table->indexes[table->index_count];
+    Value key[MAX_COLUMNS];
+
+    index->name = copy_string(name);
+    if (!index->name) {
+        return 0;
+    }
+    index->columns = *columns;
+    btree_init(&index->tree, columns->count);
+
+    for (size_t r = 0; r < table->row_count; r++) {
+        index_key(index, table->rows[r].values, key);
+        if (!btree_insert(&index->tree, key, r)) {
+            btree_free(&index->tree);
+            free(index->name);
+            return 0;
+        }
+    }
+
+    table->index_count++;
+    return 1;
+}
+
+void table_drop_index(Table *table, size_t index) {
+    assert(index < table->index_count);
+
+    btree_free(&table->indexes[index].tree);
+    free(table->indexes[index].name);
+    memmove(&table->indexes[index], &table->indexes[index + 1],
+            (table->index_count - index - 1) * sizeof(TreeIndex));
+    table->index_count--;
 }
 
 int table_find_column(const Table *table, const char *name, size_t *index) {
@@ -326,6 +403,20 @@ int table_append_row(Table *table, const Value *values) {
         }
     }
 
+    // B-tree inserts can fail, so they go first, and are undone if one
+    // does.
+    for (size_t i = 0; i < table->index_count; i++) {
+        Value key[MAX_COLUMNS];
+
+        index_key(&table->indexes[i], copy, key);
+        if (!btree_insert(&table->indexes[i].tree, key, table->row_count)) {
+            remove_from_indexes(table, i, copy, table->row_count);
+            values_free(copy, table->column_count);
+            free(copy);
+            return 0;
+        }
+    }
+
     for (size_t i = 0; i < table->constraint_count; i++) {
         Constraint *constraint = &table->constraints[i];
 
@@ -346,6 +437,53 @@ int table_append_row(Table *table, const Value *values) {
     return 1;
 }
 
+// Moves row to its new key in each B-tree index over column, for when
+// column's value becomes value. The new keys go in first, as only that
+// can fail, so running out of memory changes nothing.
+// Returns 1, or 0 if memory ran out.
+static int move_in_indexes(Table *table, size_t row, size_t column,
+                           const Value *value) {
+    const Value *values = table->rows[row].values;
+    Value after[MAX_COLUMNS];
+    Value key[MAX_COLUMNS];
+    int moves[MAX_INDEXES];
+
+    memcpy(after, values, table->column_count * sizeof(Value));
+    after[column] = *value;
+
+    // An unchanged key stays where it is; inserting it again would be a
+    // duplicate entry.
+    for (size_t i = 0; i < table->index_count; i++) {
+        moves[i] = column_list_has(&table->indexes[i].columns, column) &&
+                   (value->type != values[column].type ||
+                    value_compare(value, &values[column]) != 0);
+    }
+
+    for (size_t i = 0; i < table->index_count; i++) {
+        if (!moves[i]) {
+            continue;
+        }
+        index_key(&table->indexes[i], after, key);
+        if (!btree_insert(&table->indexes[i].tree, key, row)) {
+            for (size_t j = 0; j < i; j++) {
+                if (moves[j]) {
+                    index_key(&table->indexes[j], after, key);
+                    btree_remove(&table->indexes[j].tree, key, row);
+                }
+            }
+            return 0;
+        }
+    }
+
+    for (size_t i = 0; i < table->index_count; i++) {
+        if (moves[i]) {
+            index_key(&table->indexes[i], values, key);
+            btree_remove(&table->indexes[i].tree, key, row);
+        }
+    }
+    return 1;
+}
+
 int table_set_value(Table *table, size_t row, size_t column,
                     const Value *value) {
     assert(row < table->row_count && column < table->column_count);
@@ -360,6 +498,11 @@ int table_set_value(Table *table, size_t row, size_t column,
     }
 
     const Value *values = table->rows[row].values;
+
+    if (!move_in_indexes(table, row, column, &copy)) {
+        values_free(&copy, 1);
+        return 0;
+    }
 
     // The row is filed under its old key, which is about to change.
     for (size_t i = 0; i < table->constraint_count; i++) {
@@ -411,6 +554,11 @@ void table_delete_row(Table *table, size_t index) {
                          key_hash(&constraint->columns, row->values), index);
         }
         index_shift_rows(&constraint->rows_by_key, index);
+    }
+
+    remove_from_indexes(table, table->index_count, row->values, index);
+    for (size_t i = 0; i < table->index_count; i++) {
+        btree_shift_rows(&table->indexes[i].tree, index);
     }
 
     values_free(row->values, row->count);

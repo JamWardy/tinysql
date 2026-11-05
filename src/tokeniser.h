@@ -66,6 +66,8 @@ typedef enum {
     TOKEN_FOR,
     TOKEN_AUTOINCREMENT,
     TOKEN_RETURNING,
+    TOKEN_INDEX,
+    TOKEN_ON,
     TOKEN_EOF
 } TokenType;
 

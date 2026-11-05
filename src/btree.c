@@ -9,6 +9,9 @@
 // full, and a node that falls below it borrows or merges.
 #define MIN_COUNT (BTREE_ORDER / 2)
 
+// So a leaf left under half full by btree_remove still has an entry.
+_Static_assert(BTREE_ORDER >= 4, "BTREE_ORDER must be at least 4");
+
 // Deeper than any tree that fits in memory: each level multiplies the
 // entries by at least MIN_COUNT.
 #define MAX_DEPTH 64
@@ -528,6 +531,22 @@ static LeafFix plan_leaf_fix(const Path *path) {
     return FIX_MERGE;
 }
 
+// Returns what to do instead of borrowing when the separator's copy
+// fails: merge with a neighbour if the two fit in one node, which an
+// emptied leaf always does, or else leave the leaf under half full.
+static LeafFix fallback_fix(const Path *path) {
+    const BTreeNode *leaf = path->node[path->depth - 1];
+    const BTreeNode *parent = path->node[path->depth - 2];
+    size_t i = path->child[path->depth - 2];
+    const BTreeNode *other = parent->children[i > 0 ? i - 1 : i + 1];
+
+    // leaf still holds the entry being removed.
+    if (leaf->count - 1 + other->count <= BTREE_ORDER) {
+        return FIX_MERGE;
+    }
+    return FIX_NONE;
+}
+
 // Fixes the underfull inner nodes on path above the leaf, from the
 // bottom up, then shrinks the root if it's left with one child.
 static void fix_inner(BTree *tree, const Path *path) {
@@ -556,7 +575,7 @@ static void fix_inner(BTree *tree, const Path *path) {
     }
 }
 
-int btree_remove(BTree *tree, const Value *key, size_t row) {
+void btree_remove(BTree *tree, const Value *key, size_t row) {
     Value separator[MAX_COLUMNS];
     Path path;
 
@@ -572,8 +591,8 @@ int btree_remove(BTree *tree, const Value *key, size_t row) {
                            key, row) == 0);
 
     // Borrowing makes a new separator, a copy of the key that will start
-    // the right-hand leaf; copy it first, so running out of memory
-    // changes nothing.
+    // the right-hand leaf. Copy it first, and without the memory, do
+    // without borrowing.
     LeafFix fix = plan_leaf_fix(&path);
     BTreeNode *parent = path.depth > 1 ? path.node[path.depth - 2] : NULL;
     size_t i = path.depth > 1 ? path.child[path.depth - 2] : 0;
@@ -581,12 +600,12 @@ int btree_remove(BTree *tree, const Value *key, size_t row) {
     if (fix == FIX_BORROW_LEFT) {
         BTreeNode *left = parent->children[i - 1];
         if (!copy_key(tree, separator, key_at(tree, left, left->count - 1))) {
-            return 0;
+            fix = fallback_fix(&path);
         }
     } else if (fix == FIX_BORROW_RIGHT) {
         BTreeNode *right = parent->children[i + 1];
         if (!copy_key(tree, separator, key_at(tree, right, 1))) {
-            return 0;
+            fix = fallback_fix(&path);
         }
     }
 
@@ -600,19 +619,18 @@ int btree_remove(BTree *tree, const Value *key, size_t row) {
                 free(leaf);
                 tree->root = NULL;
             }
-            return 1;
+            break;
         case FIX_BORROW_LEFT:
             borrow_leaf_left(tree, parent, i, separator);
-            return 1;
+            break;
         case FIX_BORROW_RIGHT:
             borrow_leaf_right(tree, parent, i, separator);
-            return 1;
+            break;
         case FIX_MERGE:
             merge_children(tree, parent, i > 0 ? i - 1 : i);
             fix_inner(tree, &path);
-            return 1;
+            break;
     }
-    return 1;
 }
 
 // ---- Everything else ----

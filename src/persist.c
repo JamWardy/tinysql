@@ -21,6 +21,9 @@
 //                per constraint: u8 kind  u8 column_count
 //                                per column: u8 position
 //                u8 autoincrement  u64 last_id
+//                u8 index_count
+//                per index:  string name  u8 column_count
+//                            per column: u8 position
 //                u64 row_count
 //                per row:    null bitmap
 //                            per non-null value: INT as u64, TEXT as string
@@ -44,14 +47,19 @@
 // has had, never below any in its rows and at most the highest INT; it's
 // 0 when autoincrement is.
 //
+// An index's columns are positions in the table, in key order. Index
+// names are unique, and no table has one. The trees aren't stored:
+// they're rebuilt as rows are read, like the keys' indexes.
+//
 // A constraint's kind is 1 for PRIMARY KEY or 2 for UNIQUE, and its
 // columns are positions in the table, in key order. A table has at most
 // one PRIMARY KEY, whose columns are NOT NULL, and no two rows with the
 // same key, leaving out UNIQUE keys with a NULL. Indexes aren't stored:
 // they're rebuilt as rows are read.
 //
-// Older versions are still read, and are saved as version 6:
-//   version 5 has no AUTOINCREMENT, and no last_id.
+// Older versions are still read, and are saved as version 7:
+//   version 6 has no indexes.
+//   version 5 also has no AUTOINCREMENT, and no last_id.
 //   version 4 also has no UNIQUE.
 //   version 3 has no constraints.
 //   version 2 also has no flags byte: no column is NOT NULL.
@@ -59,7 +67,7 @@
 
 #define MAGIC "TSQL"
 #define MAGIC_LENGTH 4
-#define FORMAT_VERSION 6
+#define FORMAT_VERSION 7
 
 // Type codes in the file. Fixed here rather than taken from DataType,
 // so reordering that enum can't change the meaning of existing files.
@@ -166,6 +174,17 @@ static void write_table(FILE *file, const Table *table) {
 
     write_uint(file, table->autoincrement ? 1 : 0, 1);
     write_uint(file, (uint64_t)table->last_id, 8);
+
+    write_uint(file, table->index_count, 1);
+    for (size_t i = 0; i < table->index_count; i++) {
+        const TreeIndex *index = &table->indexes[i];
+
+        write_string(file, index->name);
+        write_uint(file, index->columns.count, 1);
+        for (size_t c = 0; c < index->columns.count; c++) {
+            write_uint(file, index->columns.positions[c], 1);
+        }
+    }
     write_uint(file, table->row_count, 8);
 
     for (size_t r = 0; r < table->row_count; r++) {
@@ -489,17 +508,19 @@ static int read_column(Reader *r, const char *table_name, ColumnDef *out) {
     return read_name(r, out->name, sizeof(out->name));
 }
 
-// Reads a constraint's column positions into out, checking each is one
-// of table's columns, and only there once.
-static int read_key_columns(Reader *r, const Table *table, ColumnList *out) {
+// Reads a key's or index's column positions into out, checking each is
+// one of table's columns, and only there once. what is "key" or "index",
+// for messages.
+static int read_key_columns(Reader *r, const Table *table, const char *what,
+                            ColumnList *out) {
     uint64_t count;
 
     if (!read_uint(r, 1, &count)) {
         return 0;
     }
     if (count == 0 || count > table->column_count) {
-        return read_fail(r, "table '%s' has a key with %llu columns",
-                         table->name, (unsigned long long)count);
+        return read_fail(r, "table '%s' has a %s with %llu columns",
+                         table->name, what, (unsigned long long)count);
     }
 
     out->count = (size_t)count;
@@ -510,15 +531,16 @@ static int read_key_columns(Reader *r, const Table *table, ColumnList *out) {
             return 0;
         }
         if (position >= table->column_count) {
-            return read_fail(r, "table '%s' has a key with no column %llu",
-                             table->name, (unsigned long long)position);
+            return read_fail(r, "table '%s' has a %s with no column %llu",
+                             table->name, what,
+                             (unsigned long long)position);
         }
         out->positions[i] = (size_t)position;
 
         for (size_t j = 0; j < i; j++) {
             if (out->positions[j] == out->positions[i]) {
-                return read_fail(r, "table '%s' has a key with column '%s' "
-                                 "twice", table->name,
+                return read_fail(r, "table '%s' has a %s with column '%s' "
+                                 "twice", table->name, what,
                                  table->columns[position].name);
             }
         }
@@ -565,7 +587,7 @@ static int read_constraints(Reader *r, Table *table) {
             }
         }
 
-        if (!read_key_columns(r, table, &columns)) {
+        if (!read_key_columns(r, table, "key", &columns)) {
             return 0;
         }
         if (!table_add_constraint(table, kind, &columns)) {
@@ -615,6 +637,60 @@ static int read_autoincrement(Reader *r, Table *table) {
     return 1;
 }
 
+// Reads table's CREATE INDEX indexes, which files before version 7
+// don't have, and adds them while it has no rows, so each fills as the
+// rows are read.
+static int read_indexes(Reader *r, Table *table) {
+    uint64_t count;
+
+    if (r->version < 7) {
+        return 1;
+    }
+    if (!read_uint(r, 1, &count)) {
+        return 0;
+    }
+    if (count > MAX_INDEXES) {
+        return read_fail(r, "table '%s' has %llu indexes (max %d)",
+                         table->name, (unsigned long long)count, MAX_INDEXES);
+    }
+
+    for (uint64_t i = 0; i < count; i++) {
+        char name[MAX_TOKEN_LENGTH];
+        ColumnList columns;
+
+        if (!read_name(r, name, sizeof(name)) ||
+            !read_key_columns(r, table, "index", &columns)) {
+            return 0;
+        }
+        if (!table_add_index(table, name, &columns)) {
+            return read_fail(r, "out of memory");
+        }
+    }
+    return 1;
+}
+
+// Checks no index has the name of a table or of another index, as they
+// share names. Run once every table is read, as a table later in the
+// file may have the name.
+static int check_index_names(Reader *r, const Database *db) {
+    for (size_t t = 0; t < db->count; t++) {
+        const Table *table = &db->tables[t];
+
+        for (size_t i = 0; i < table->index_count; i++) {
+            const char *name = table->indexes[i].name;
+            size_t other_table;
+            size_t other_index;
+
+            database_find_index(db, name, &other_table, &other_index);
+            if (database_find_table(db, name) ||
+                other_table != t || other_index != i) {
+                return read_fail(r, "the name '%s' is used twice", name);
+            }
+        }
+    }
+    return 1;
+}
+
 static int read_table(Reader *r, Database *db) {
     char name[MAX_TOKEN_LENGTH];
     ColumnDef columns[MAX_COLUMNS];
@@ -657,7 +733,8 @@ static int read_table(Reader *r, Database *db) {
 
     // No other table is created while reading constraints and rows, so
     // table stays valid.
-    if (!read_constraints(r, table) || !read_autoincrement(r, table)) {
+    if (!read_constraints(r, table) || !read_autoincrement(r, table) ||
+        !read_indexes(r, table)) {
         return 0;
     }
 
@@ -709,7 +786,7 @@ static int read_database(Reader *r, Database *db) {
         return read_fail(r, "unexpected data at end of file");
     }
 
-    return 1;
+    return check_index_names(r, db);
 }
 
 int database_load(Database *db, const char *path,

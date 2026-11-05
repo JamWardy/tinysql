@@ -106,7 +106,23 @@ static void print_create(const Table *table) {
     puts(");");
 }
 
-// .schema [table]: how every table, or just the one named, was created.
+// Prints a CREATE INDEX statement for each of table's indexes, e.g.
+// CREATE INDEX orders_item ON orders (item_id, expires_at);
+static void print_indexes(const Table *table) {
+    for (size_t i = 0; i < table->index_count; i++) {
+        const TreeIndex *index = &table->indexes[i];
+
+        printf("CREATE INDEX %s ON %s (", index->name, table->name);
+        for (size_t c = 0; c < index->columns.count; c++) {
+            printf("%s%s", c > 0 ? ", " : "",
+                   table->columns[index->columns.positions[c]].name);
+        }
+        puts(");");
+    }
+}
+
+// .schema [table]: how every table, or just the one named, was created,
+// with its indexes.
 static void print_schema(const Database *db, const char *name) {
     if (name) {
         const Table *table = database_find_table(db, name);
@@ -116,6 +132,7 @@ static void print_schema(const Database *db, const char *name) {
             return;
         }
         print_create(table);
+        print_indexes(table);
         return;
     }
 
@@ -126,6 +143,7 @@ static void print_schema(const Database *db, const char *name) {
 
     for (size_t i = 0; i < db->count; i++) {
         print_create(&db->tables[i]);
+        print_indexes(&db->tables[i]);
     }
 }
 

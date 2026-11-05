@@ -173,6 +173,14 @@ typedef struct {
     int for_update;
 } SelectStatement;
 
+// CREATE INDEX name ON table (a, b): the table is the Statement's
+// table_name.
+typedef struct {
+    char name[MAX_TOKEN_LENGTH];
+    char columns[MAX_COLUMNS][MAX_TOKEN_LENGTH];  // In key order.
+    int column_count;
+} CreateIndexStatement;
+
 typedef struct {
     int has_where;   // 0 deletes every row.
     int where;       // The root node of a BOOL expression.
@@ -199,6 +207,8 @@ typedef enum {
     STMT_DELETE,
     STMT_UPDATE,
     STMT_DROP,       // Needs only table_name.
+    STMT_CREATE_INDEX,
+    STMT_DROP_INDEX, // Needs only index_name.
     STMT_BEGIN,      // These three need nothing more.
     STMT_COMMIT,
     STMT_ROLLBACK
@@ -208,6 +218,7 @@ typedef enum {
 typedef struct {
     StatementType type;
     char table_name[MAX_TOKEN_LENGTH];
+    char index_name[MAX_TOKEN_LENGTH];  // DROP INDEX's.
     int param_count;  // How many `?`s, each a LITERAL_PARAM.
 
     ExprNode nodes[MAX_NODES];  // Every expression in the statement.
@@ -215,6 +226,7 @@ typedef struct {
 
     union {
         CreateStatement create;
+        CreateIndexStatement create_index;
         InsertStatement insert;
         SelectStatement select;
         DeleteStatement delete;
