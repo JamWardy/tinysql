@@ -58,9 +58,6 @@ Done:
 - [x] `LIKE` and `ILIKE`, for searching item titles, with an index used
       for a pattern's fixed start, as `DESIGN.md` describes under
       "LIKE" and "Indexes"
-
-Next, roughly in order, towards a toy online shop (see "Goal" below):
-
 - [x] A server that links `libtinysql.a`, with a wire protocol for
       statements, parameters and results, as `../DESIGN.md` describes
       it under "Key decisions". Errors carry a code as well as the
@@ -68,8 +65,11 @@ Next, roughly in order, towards a toy online shop (see "Goal" below):
       (its `409`, or an order's retry) from any other failure
 - [x] Lock the database file while it's open, so a second process
       can't open it, as `../DESIGN.md` describes under "Key decisions"
-- [ ] Replication, for search's read replica, as `../DESIGN.md`
+- [x] Replication, for search's read replica, as `../DESIGN.md`
       describes it
+- [x] Split `executor.c` (1,250 lines) into `src/executor/`, one file
+      per statement, as `CONVENTIONS.md` describes
+- [x] Split `parser.c` (980 lines) into `src/parser/` the same way
 
 Later, nice but not needed for the shop:
 
@@ -121,9 +121,6 @@ Smaller tidy-ups:
 
 - [ ] `compile_commands.json` (git-ignored), so clangd jumps from a
       call to the function body
-- [x] Split `executor.c` (1,250 lines) into `src/executor/`, one file
-      per statement, as `CONVENTIONS.md` describes
-- [x] Split `parser.c` (980 lines) into `src/parser/` the same way
 
 ## Goal: a toy online shop
 
