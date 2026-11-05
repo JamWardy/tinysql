@@ -28,7 +28,7 @@ int transaction_autocommit(Database *db, const char *path, Error *error) {
     }
 
     if (!save(db, path, &reason)) {
-        return fail(error, reason.code,
+        return fail(error, ERROR_CHANGE_NOT_SAVED,
                     "change kept in memory but not saved: %s",
                     reason.message);
     }

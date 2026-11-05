@@ -14,6 +14,7 @@ typedef enum {
     ERROR_INTERNAL,                   // A bug in TinySQL.
     ERROR_OUT_OF_MEMORY,
     ERROR_IO,                         // Reading or writing the file.
+    ERROR_CHANGE_NOT_SAVED,           // Made in memory, but saving failed.
     ERROR_DATA_CORRUPTED,             // The file isn't a valid database.
     ERROR_DATABASE_IN_USE,            // Another process has the file.
     ERROR_SYNTAX,

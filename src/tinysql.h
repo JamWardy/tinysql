@@ -45,8 +45,8 @@
 // or NULL. It's only read during the call.
 //
 // On failure result is left empty, and db is usually unchanged. But if only
-// saving failed, the change stays in memory, and the next save that works saves
-// it too.
+// saving failed, the error is ERROR_CHANGE_NOT_SAVED: the change stays in
+// memory, and the next save that works saves it too.
 int tinysql_run(Database *db, const char *path, const char *sql,
                 const Value *params, size_t param_count,
                 Result *result, Error *error);

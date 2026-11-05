@@ -18,6 +18,7 @@ const char *error_sqlstate(ErrorCode code) {
         case ERROR_INTERNAL:                    return "XX000";
         case ERROR_OUT_OF_MEMORY:               return "53200";
         case ERROR_IO:                          return "58030";
+        case ERROR_CHANGE_NOT_SAVED:            return "58030";
         case ERROR_DATA_CORRUPTED:              return "XX001";
         case ERROR_DATABASE_IN_USE:             return "55006";
         case ERROR_SYNTAX:                      return "42601";
