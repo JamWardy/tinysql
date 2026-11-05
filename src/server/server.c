@@ -26,7 +26,7 @@ static void request_stop(int signal_number) {
     stop_requested = 1;
 }
 
-static double now_seconds(void) {
+double now_seconds(void) {
     struct timespec now;
 
     clock_gettime(CLOCK_MONOTONIC, &now);
@@ -41,26 +41,39 @@ static void fail_rollback(const Error *error) {
     exit(1);
 }
 
-static void rollback_owner(Server *server, const char *why) {
+int run_statement(Server *server, const char *sql, const Value *params,
+                  size_t param_count, Error *error) {
     Result result;
-    Error error;
 
     result_init(&result);
-    if (!tinysql_run(server->db, server->path, "ROLLBACK;", NULL, 0,
-                     &result, &error)) {
+    int ok = tinysql_run(server->db, server->path, sql, params, param_count,
+                         &result, error);
+    result_free(&result);
+    return ok;
+}
+
+void rollback_owner(Server *server, const char *why) {
+    Error error;
+
+    if (!run_statement(server, "ROLLBACK;", NULL, 0, &error)) {
         fail_rollback(&error);
     }
-    result_free(&result);
 
     fprintf(stderr, "tinysql-server: rolled back a transaction: %s\n", why);
     server->owner = NULL;
+    if (server->role == SERVER_PRIMARY) {
+        discard_unit(server);
+    }
 }
 
 // ---- Connections ----
 
-static void close_connection(Server *server, Connection *conn) {
+void close_connection(Server *server, Connection *conn) {
     if (server->owner == conn) {
         rollback_owner(server, "its connection closed");
+    }
+    if (conn->state == CONNECTION_REPLICA) {
+        fprintf(stderr, "tinysql-server: a replica disconnected\n");
     }
 
     close(conn->fd);
@@ -69,17 +82,20 @@ static void close_connection(Server *server, Connection *conn) {
     conn->state = CONNECTION_UNUSED;
 }
 
-// Out of memory leaves no way to answer, so the connection is closed.
-static void send_last_error(Server *server, Connection *conn,
-                            ErrorCode code, const char *message) {
-    Error error;
-
-    fail(&error, code, "%s", message);
-    if (!protocol_write_error(&conn->out, &error)) {
+// Out of memory leaves no way to answer, so then it just closes.
+void send_last_error(Server *server, Connection *conn, const Error *error) {
+    if (!protocol_write_error(&conn->out, error)) {
         close_connection(server, conn);
         return;
     }
     conn->state = CONNECTION_CLOSING;
+}
+
+static void refuse(Server *server, Connection *conn, const char *why) {
+    Error error;
+
+    fail(&error, ERROR_PROTOCOL_VIOLATION, "%s", why);
+    send_last_error(server, conn, &error);
 }
 
 // Looks at the first message in conn->in, once conn is ready for one.
@@ -92,25 +108,27 @@ static void take_message(Server *server, Connection *conn) {
         case FRAME_INCOMPLETE:
             return;
         case FRAME_TOO_BIG:
-            send_last_error(server, conn, ERROR_PROTOCOL_VIOLATION,
-                            "message is too big");
+            refuse(server, conn, "message is too big");
             return;
         case FRAME_READY:
             break;
     }
 
-    if (type == MESSAGE_QUERY) {
+    // A replica's own copy could be served to replicas of it, as Postgres's
+    // cascading replication does, but nothing needs that.
+    if (type == MESSAGE_REPLICATE && server->role == SERVER_REPLICA) {
+        refuse(server, conn, "this server is a replica");
+    } else if (type == MESSAGE_QUERY || type == MESSAGE_REPLICATE) {
         conn->state = CONNECTION_WAITING;
         conn->ticket = server->next_ticket++;
     } else if (type == MESSAGE_TERMINATE) {
         close_connection(server, conn);
     } else {
-        send_last_error(server, conn, ERROR_PROTOCOL_VIOLATION,
-                        "unknown message type");
+        refuse(server, conn, "unknown message type");
     }
 }
 
-static int set_non_blocking(int fd) {
+int set_non_blocking(int fd) {
     int flags = fcntl(fd, F_GETFL);
 
     return flags >= 0 && fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
@@ -164,6 +182,11 @@ static void receive(Server *server, Connection *conn) {
         }
         return;
     }
+    // A replica only listens once it has asked.
+    if (conn->state == CONNECTION_REPLICA) {
+        close_connection(server, conn);
+        return;
+    }
     if (!buffer_append(&conn->in, chunk, (size_t)count)) {
         close_connection(server, conn);
         return;
@@ -182,7 +205,7 @@ static void send_reply(Server *server, Connection *conn) {
         return;
     }
     buffer_consume(&conn->out, (size_t)count);
-    if (conn->out.length > 0) {
+    if (conn->out.length > 0 || conn->state == CONNECTION_REPLICA) {
         return;
     }
 
@@ -197,6 +220,25 @@ static void send_reply(Server *server, Connection *conn) {
 }
 
 // ---- Running queries ----
+
+// What a statement just did, for the replicas: result if it worked, or NULL
+// and error. A change that failed only to save is still in memory, and in what
+// readers here see, so it's sent too.
+static void replicate(Server *server, const Query *query,
+                      const Result *result, const Error *error) {
+    int changed = result ? tinysql_changes_database(result->type)
+                         : error->code == ERROR_CHANGE_NOT_SAVED;
+
+    if (changed) {
+        record_change(server, query);
+    }
+    if (result && result->type == STMT_ROLLBACK) {
+        discard_unit(server);
+    }
+    if (!server->db->in_transaction) {
+        send_unit(server);
+    }
+}
 
 // Fills reply with T, D..., C, or E, for a 'Q' message's body.
 static int run_query(Server *server, Connection *conn,
@@ -221,8 +263,16 @@ static int run_query(Server *server, Connection *conn,
     }
 
     result_init(&result);
-    int ok = tinysql_run(server->db, server->path, query.sql, query.params,
-                         query.param_count, &result, &error);
+    int ok = server->role == SERVER_REPLICA
+                 ? tinysql_run_read_only(server->db, server->path, query.sql,
+                                         query.params, query.param_count,
+                                         &result, &error)
+                 : tinysql_run(server->db, server->path, query.sql,
+                               query.params, query.param_count, &result,
+                               &error);
+    if (server->role == SERVER_PRIMARY) {
+        replicate(server, &query, ok ? &result : NULL, &error);
+    }
     query_free(&query);
 
     int written = ok ? protocol_write_result(reply, &result)
@@ -263,8 +313,8 @@ static void serve_query(Server *server, Connection *conn) {
     conn->state = CONNECTION_WRITING;
 }
 
-// The longest-waiting query that may run: any, with no transaction open, or
-// else only the owner's.
+// The longest-waiting query or 'R' that may run: any, with no transaction
+// open, or else only the owner's.
 static Connection *next_to_serve(Server *server) {
     Connection *next = NULL;
 
@@ -282,12 +332,28 @@ static Connection *next_to_serve(Server *server) {
     return next;
 }
 
-static void serve_waiting_queries(Server *server) {
-    Connection *conn;
-
-    while ((conn = next_to_serve(server)) != NULL) {
+static void serve(Server *server, Connection *conn) {
+    if (conn->in.data[0] == MESSAGE_REPLICATE) {
+        serve_replicate(server, conn);
+    } else {
         serve_query(server, conn);
     }
+}
+
+// Changes from the primary go first whenever no transaction is open, so
+// clients' transactions can delay them but never starve them.
+static void serve_waiting(Server *server) {
+    Connection *conn;
+
+    do {
+        if (server->role == SERVER_REPLICA) {
+            upstream_apply(server);
+        }
+        conn = next_to_serve(server);
+        if (conn) {
+            serve(server, conn);
+        }
+    } while (conn);
 }
 
 // The owner is idle unless its next query is waiting to run.
@@ -357,22 +423,43 @@ static int watch(const Server *server, fd_set *reads, fd_set *writes) {
             case CONNECTION_CLOSING:
                 FD_SET(conn->fd, writes);
                 break;
+            case CONNECTION_REPLICA:
+                FD_SET(conn->fd, reads);  // To see it hang up.
+                if (conn->out.length > 0) {
+                    FD_SET(conn->fd, writes);
+                }
+                break;
         }
         if (conn->fd > highest) {
             highest = conn->fd;
         }
     }
+
+    if (server->role == SERVER_REPLICA) {
+        upstream_watch(&server->as.upstream, reads, writes, &highest);
+    }
     return highest;
 }
 
-// Until the owner's transaction would time out, or no limit if there's none.
+// Until the owner's transaction would time out or it's time to reconnect to
+// the primary, whichever is sooner, or no limit if neither.
 static struct timespec *select_timeout(const Server *server,
                                        struct timespec *timeout) {
-    if (!server->owner) {
+    double retry_at;
+    int has_deadline = server->owner != NULL;
+    double deadline = has_deadline ? idle_deadline(server) : 0;
+
+    if (server->role == SERVER_REPLICA &&
+        upstream_retry_at(&server->as.upstream, &retry_at) &&
+        (!has_deadline || retry_at < deadline)) {
+        deadline = retry_at;
+        has_deadline = 1;
+    }
+    if (!has_deadline) {
         return NULL;
     }
 
-    double wait = idle_deadline(server) - now_seconds();
+    double wait = deadline - now_seconds();
     if (wait < 0) {
         wait = 0;
     }
@@ -405,7 +492,20 @@ static void handle_ready(Server *server, const fd_set *reads,
                     send_reply(server, conn);
                 }
                 break;
+            case CONNECTION_REPLICA:
+                if (FD_ISSET(conn->fd, writes)) {
+                    send_reply(server, conn);
+                }
+                if (conn->state == CONNECTION_REPLICA &&
+                    FD_ISSET(conn->fd, reads)) {
+                    receive(server, conn);
+                }
+                break;
         }
+    }
+
+    if (server->role == SERVER_REPLICA) {
+        upstream_handle_ready(server, reads, writes);
     }
 }
 
@@ -438,16 +538,34 @@ static void shut_down(Server *server) {
         }
     }
     close(server->listener);
+
+    switch (server->role) {
+        case SERVER_PRIMARY:
+            discard_unit(server);
+            break;
+        case SERVER_REPLICA:
+            upstream_close(&server->as.upstream);
+            break;
+    }
 }
 
-int server_run(Database *db, const char *path, int port) {
+int server_run(Database *db, const char *path, const ServerOptions *options) {
     static Server server;  // Large, so off the stack; there's only one.
     sigset_t while_waiting;
+    int port = options->port;
 
     server.db = db;
     server.path = path;
     server.owner = NULL;
     server.next_ticket = 0;
+    if (options->replica) {
+        server.role = SERVER_REPLICA;
+        upstream_init(&server.as.upstream, options->replica->primary_port);
+    } else {
+        server.role = SERVER_PRIMARY;
+        buffer_init(&server.as.unit.statements);
+        server.as.unit.count = 0;
+    }
 
     if (!catch_stop_signals(&while_waiting)) {
         perror("tinysql-server: signals");
@@ -460,6 +578,10 @@ int server_run(Database *db, const char *path, int port) {
     }
     fprintf(stderr, "tinysql-server: serving '%s' on 127.0.0.1:%d\n",
             path, port);
+    if (server.role == SERVER_REPLICA) {
+        fprintf(stderr, "tinysql-server: a read-only replica of "
+                        "127.0.0.1:%d\n", options->replica->primary_port);
+    }
 
     while (!stop_requested) {
         fd_set reads;
@@ -478,7 +600,10 @@ int server_run(Database *db, const char *path, int port) {
 
         handle_ready(&server, &reads, &writes);
         expire_idle_transaction(&server);
-        serve_waiting_queries(&server);
+        if (server.role == SERVER_REPLICA) {
+            upstream_connect_if_due(&server);
+        }
+        serve_waiting(&server);
     }
 
     fprintf(stderr, "tinysql-server: stopping\n");

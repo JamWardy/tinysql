@@ -31,8 +31,10 @@ EXECUTOR_SRCS = src/executor/executor.c src/executor/common.c \
 # commands.
 APP_SRCS = src/repl/main.c src/repl/input.c src/repl/print.c \
            src/repl/commands.c
-# The server: its loop, and the messages it swaps with clients.
-SERVER_SRCS = src/server/main.c src/server/server.c src/server/protocol.c
+# The server: its loop, the messages it swaps with clients, and replication,
+# from the primary's side and the replica's.
+SERVER_SRCS = src/server/main.c src/server/server.c src/server/protocol.c \
+              src/server/primary.c src/server/replica.c
 
 # Objects and .d files go in build/, mirroring src/.
 LIB_OBJS = $(LIB_SRCS:src/%.c=build/%.o)
