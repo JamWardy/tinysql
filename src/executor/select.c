@@ -57,9 +57,7 @@ static int resolve_limit(const SelectStatement *select,
     return 1;
 }
 
-// Whether an item, or the ORDER BY, has an aggregate, so the SELECT gives one
-// row for all it matches.
-static int is_aggregate_select(const Statement *stmt) {
+int is_aggregate_select(const Statement *stmt) {
     const SelectStatement *select = &stmt->as.select;
 
     for (int i = 0; i < select->list.item_count; i++) {
@@ -69,6 +67,26 @@ static int is_aggregate_select(const Statement *stmt) {
     }
     return select->has_order &&
            expr_has_aggregate(stmt->nodes, select->order_by);
+}
+
+int find_row_order(const ExprContext *ctx, const Statement *stmt,
+                   const ParamList *params, RowOrder *out,
+                   char *error, size_t error_size) {
+    const SelectStatement *select = &stmt->as.select;
+    int aggregate = is_aggregate_select(stmt);
+
+    out->by = ORDER_BY_NOTHING;
+    out->column = 0;
+    if (select->has_order && !aggregate) {
+        out->by = ctx->nodes[select->order_by].kind == EXPR_COLUMN
+                      ? ORDER_BY_COLUMN : ORDER_BY_EXPRESSION;
+    }
+    if (out->by == ORDER_BY_COLUMN) {
+        out->column = ctx->columns[select->order_by];
+    }
+    out->descending = select->descending;
+    out->has_limit = select->has_limit;
+    return resolve_limit(select, params, &out->limit, error, error_size);
 }
 
 int select_resolve_list(ExprContext *ctx, const SelectList *list,
@@ -136,7 +154,7 @@ int select_append_row(const ExprContext *ctx, const SelectList *list,
 // Sorted by the ORDER BY if there is one; *count is how many to keep for the
 // LIMIT. The caller frees *sorted.
 static int sort_rows(const ExprContext *ctx, const SelectStatement *select,
-                     long long limit, const RowList *rows,
+                     long long limit, int in_order, const RowList *rows,
                      SortRow **sorted, size_t *count,
                      char *error, size_t error_size) {
     *sorted = malloc(rows->count * sizeof(**sorted));
@@ -160,7 +178,7 @@ static int sort_rows(const ExprContext *ctx, const SelectStatement *select,
 
     // Skipped for under two rows; *sorted may be NULL, which qsort
     // doesn't allow even with nothing to sort.
-    if (select->has_order && rows->count > 1) {
+    if (select->has_order && !in_order && rows->count > 1) {
         sort_descending = select->descending;
         qsort(*sorted, rows->count, sizeof(**sorted), compare_rows);
     }
@@ -172,12 +190,12 @@ static int sort_rows(const ExprContext *ctx, const SelectStatement *select,
 }
 
 static int select_rows(const ExprContext *ctx, const SelectStatement *select,
-                       long long limit, const RowList *rows, Result *result,
-                       char *error, size_t error_size) {
+                       long long limit, int in_order, const RowList *rows,
+                       Result *result, char *error, size_t error_size) {
     SortRow *sorted;
     size_t count;
 
-    if (!sort_rows(ctx, select, limit, rows, &sorted, &count,
+    if (!sort_rows(ctx, select, limit, in_order, rows, &sorted, &count,
                    error, error_size)) {
         return 0;
     }
@@ -230,7 +248,7 @@ int execute_select(Database *db, const Statement *stmt,
     ExprContext ctx;
     Filter filter;
     const Filter *where;
-    long long limit;
+    RowOrder order;
 
     expr_init(&ctx, stmt, table, params);
 
@@ -255,13 +273,16 @@ int execute_select(Database *db, const Statement *stmt,
         (select->has_order &&
          !expr_resolve(&ctx, select->order_by, allowed, "ORDER BY",
                        error, error_size)) ||
-        !resolve_limit(select, params, &limit, error, error_size)) {
+        !find_row_order(&ctx, stmt, params, &order, error, error_size)) {
         return 0;
     }
 
     RowList matched;
+    int in_order;
+    long long limit = order.limit;
 
-    if (!where_collect_rows(table, where, &matched, error, error_size)) {
+    if (!where_collect_rows(table, where, &order, &matched, &in_order,
+                            error, error_size)) {
         return 0;
     }
 
@@ -270,8 +291,8 @@ int execute_select(Database *db, const Statement *stmt,
     int ok = aggregate
                  ? select_aggregates(&ctx, select, limit, &matched, result,
                                      error, error_size)
-                 : select_rows(&ctx, select, limit, &matched, result,
-                               error, error_size);
+                 : select_rows(&ctx, select, limit, in_order, &matched,
+                               result, error, error_size);
     free(matched.rows);
     return ok;
 }

@@ -49,31 +49,33 @@ static void write_range(char *out, size_t size, const IndexableConditions *b) {
 
 // e.g. "every row", "PRIMARY KEY (id)" or "index orders_item_expires (item_id
 // =, expires_at >)".
-static void describe(const Table *table, const Plan *plan, char *out,
-                     size_t size) {
-    const ColumnList *columns;
-    size_t used;
-    size_t shown;
+static void describe(const Table *table, const Plan *plan, int sorted,
+                     char *out, size_t size) {
+    const ColumnList *columns = NULL;
+    size_t used = 0;
+    size_t shown = 0;
 
     switch (plan->kind) {
         case PLAN_SCAN:
-            snprintf(out, size, "every row");
-            return;
+            used = (size_t)snprintf(out, size, "every row");
+            break;
         case PLAN_KEY:
             columns = &plan->constraint->columns;
             shown = columns->count;
-            used = (size_t)snprintf(out, size, "%s (",
+            used = (size_t)snprintf(out, size, "%s",
                                     constraint_kind_name(
                                         plan->constraint->kind));
             break;
         case PLAN_INDEX:
             columns = &plan->index->columns;
             shown = plan->equal_count + (plan->range ? 1 : 0);
-            used = (size_t)snprintf(out, size, "index %s (",
+            used = (size_t)snprintf(out, size, "index %s",
                                     plan->index->name);
             break;
     }
 
+    // The columns it uses, e.g. " (item_id =, expires_at >)"; an index
+    // used only for its order uses none.
     for (size_t i = 0; i < shown && used < size; i++) {
         const char *name = table->columns[columns->positions[i]].name;
         char ops[16] = "=";
@@ -85,11 +87,19 @@ static void describe(const Table *table, const Plan *plan, char *out,
             ops[0] = '\0';  // A key is pinned whole, by =.
         }
         used += (size_t)snprintf(out + used, size - used, "%s%s%s%s",
-                                 i > 0 ? ", " : "", name,
+                                 i > 0 ? ", " : " (", name,
                                  ops[0] ? " " : "", ops);
     }
-    if (used < size) {
-        snprintf(out + used, size - used, ")");
+    if (shown > 0 && used < size) {
+        used += (size_t)snprintf(out + used, size - used, ")");
+    }
+
+    // At most one row needs no order, so a key plan says nothing.
+    if (sorted && plan->kind != PLAN_KEY && used < size) {
+        snprintf(out + used, size - used, "%s",
+                 plan->ordering == ORDERING_NONE ? ", then sort"
+                 : plan->ordering == ORDERING_BACKWARDS
+                     ? ", in order, backwards" : ", in order");
     }
 }
 
@@ -119,7 +129,25 @@ int execute_explain(Database *db, const Statement *stmt,
         return 0;
     }
 
-    choose_plan(table, where, &candidates);
+    // Only a SELECT has an order to give.
+    RowOrder order;
+    const RowOrder *wanted = NULL;
+
+    if (stmt->type == STMT_SELECT) {
+        const SelectStatement *select = &stmt->as.select;
+
+        if (select->has_order && !is_aggregate_select(stmt) &&
+            !expr_resolve(&ctx, select->order_by, EXPR_COLUMNS, "ORDER BY",
+                          error, error_size)) {
+            return 0;
+        }
+        if (!find_row_order(&ctx, stmt, params, &order, error, error_size)) {
+            return 0;
+        }
+        wanted = &order;
+    }
+
+    choose_plan(table, where, wanted, &candidates);
 
     result_add_column(result, "plan", TYPE_TEXT);
     result_add_column(result, "reads", TYPE_INT);
@@ -132,7 +160,7 @@ int execute_explain(Database *db, const Statement *stmt,
         char text[256];
         Value row[5];
 
-        describe(table, plan, text, sizeof(text));
+        describe(table, plan, candidates.sorted, text, sizeof(text));
         row[0].type = TYPE_TEXT;
         row[0].as.text = text;
         row[1].type = TYPE_INT;

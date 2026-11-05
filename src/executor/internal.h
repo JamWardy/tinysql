@@ -47,6 +47,22 @@ typedef struct {
     size_t count;
 } PositionList;
 
+// The order a SELECT wants its rows in, and how many: what decides whether a
+// plan giving rows in order can skip the sort and stop early.
+typedef enum {
+    ORDER_BY_NOTHING,     // No ORDER BY, or an aggregate SELECT's.
+    ORDER_BY_EXPRESSION,  // Only a sort can give it.
+    ORDER_BY_COLUMN       // A plain column, which an index can give too.
+} OrderBy;
+
+typedef struct {
+    OrderBy by;
+    size_t column;     // ORDER_BY_COLUMN's.
+    int descending;
+    int has_limit;
+    long long limit;
+} RowOrder;
+
 // Statements, one per file; execute() picks one by the statement's type.
 
 // schema.c: CREATE and DROP, of tables and indexes.
@@ -100,6 +116,16 @@ void select_add_columns(const ExprContext *ctx, const SelectList *list,
 int select_append_row(const ExprContext *ctx, const SelectList *list,
                       const Row *row, Result *result,
                       char *error, size_t error_size);
+
+// Whether an item, or the ORDER BY, has an aggregate, so the SELECT gives one
+// row for all it matches.
+int is_aggregate_select(const Statement *stmt);
+
+// The order stmt's SELECT wants, its ORDER BY already resolved in ctx; an
+// aggregate SELECT's is none. Fails on a bad LIMIT.
+int find_row_order(const ExprContext *ctx, const Statement *stmt,
+                   const ParamList *params, RowOrder *out,
+                   char *error, size_t error_size);
 
 // common.c: lookups and checks most statements need.
 
@@ -175,6 +201,13 @@ typedef enum {
     PLAN_INDEX   // Read a range of a CREATE INDEX index.
 } PlanKind;
 
+// Whether a plan gives its rows in the ORDER BY's order, and how.
+typedef enum {
+    ORDERING_NONE,       // They need sorting.
+    ORDERING_FORWARDS,   // In order as found.
+    ORDERING_BACKWARDS   // In order, walking the index backwards, for DESC.
+} PlanOrdering;
+
 // One way of finding a statement's rows, with its estimates.
 typedef struct {
     PlanKind kind;
@@ -183,8 +216,9 @@ typedef struct {
     const TreeIndex *index;        // PLAN_INDEX's index, how many of its
     size_t equal_count;            // leading columns are pinned, and its
     const IndexableConditions *range;  // next column's conditions, or NULL.
-    double reads;                  // Estimated rows read.
-    double cost;
+    PlanOrdering ordering;
+    double reads;                  // Estimated rows read, LIMIT included.
+    double cost;                   // A sort included, if it needs one.
 } Plan;
 
 // Reading every row, then a plan per key and per index at most.
@@ -197,12 +231,14 @@ typedef struct {
     size_t count;
     size_t chosen;
     double matches;  // Estimated rows the whole WHERE matches.
+    int sorted;      // There's an ORDER BY to give.
 } CandidatePlans;
 
-// filter may be NULL, for every row. Reads no rows, but with statistics it
-// works out the values conditions compare with.
+// filter may be NULL, for every row, and order NULL when the order doesn't
+// matter. Reads no rows, but with statistics it works out the values
+// conditions compare with.
 void choose_plan(const Table *table, const Filter *filter,
-                 CandidatePlans *candidates);
+                 const RowOrder *order, CandidatePlans *candidates);
 
 // where.c: checking a WHERE and finding the rows it matches.
 
@@ -216,8 +252,10 @@ int where_resolve(ExprContext *ctx, int has_where, int root, Filter *filter,
 int where_collect_positions(const Table *table, const Filter *filter,
                             PositionList *out, char *error, size_t error_size);
 
-// out->rows is a new array, which the caller frees.
-int where_collect_rows(const Table *table, const Filter *filter, RowList *out,
+// out->rows is a new array, which the caller frees. With an order, sets
+// *in_order to whether the rows came in it, and stops at its LIMIT if so.
+int where_collect_rows(const Table *table, const Filter *filter,
+                       const RowOrder *order, RowList *out, int *in_order,
                        char *error, size_t error_size);
 
 #endif

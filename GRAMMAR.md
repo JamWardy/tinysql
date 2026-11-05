@@ -354,10 +354,14 @@ characters (`'10' < '9'`). `BOOL`s compare with `false` first.
 ## Ordering and limiting
 
 `SELECT` filters with `WHERE`, then sorts with `ORDER BY`, then keeps
-the first `LIMIT` rows. Without `ORDER BY`, rows come out in the order
-they were inserted. Rows with equal sort values also keep that order.
-`ORDER BY` takes any expression of the row, such as `price * qty`, and
-it doesn't have to be one of the selected items.
+the first `LIMIT` rows. `ORDER BY` takes any expression of the row, such
+as `price * qty`, and it doesn't have to be one of the selected items.
+
+Rows with equal sort values come in no particular order, as in SQL and
+Postgres: an index walked backwards for `DESC` gives them newest first,
+and a sort oldest first. Without `ORDER BY`, rows come out in whatever
+order the plan finds them. Add more to the `ORDER BY` when the order
+matters.
 
 ## Aggregates
 
@@ -521,6 +525,21 @@ to read; the whole `WHERE` is still checked on each, so `status =
 `(item_id, expires_at)` can't help a `WHERE` on `expires_at` alone, as
 those rows are spread through it.
 
+An index also gives its rows in order. So when a `SELECT`'s `ORDER BY`
+is the column right after the ones the `WHERE` pins with `=`, or the
+index's first column, the rows can come straight from walking it,
+forwards for `ASC` or backwards for `DESC`, with no sort, and with a
+`LIMIT` the walk stops once it has that many:
+
+```sql
+SELECT * FROM orders WHERE item_id = 5 ORDER BY expires_at DESC LIMIT 10;
+SELECT * FROM items ORDER BY price LIMIT 20;   -- with an index on price
+```
+
+`NULL`s come last in `ASC` and first in `DESC`, as a sort puts them. An
+index can be used for its order alone, as in the second query, even when
+the `WHERE` doesn't use it.
+
 Whether a statement uses an index, and which, is the planner's choice:
 see "Plans".
 
@@ -551,6 +570,15 @@ which costs more per row, as Postgres weighs reading in order against
 jumping about. The cheapest wins, and the first listed on a tie, so an
 index is used only when it reads under about a quarter of the rows. On a
 tiny table, reading every row can beat even a key.
+
+With an `ORDER BY`, a `SELECT` also considers each index that gives its
+order (see "Indexes"). A plan that gives the order needs no sort, and
+with a `LIMIT` stops once that many rows have matched, so its reads and
+cost are cut to the `LIMIT`'s share of the rows it expects to match. Any
+other plan reads all its rows and then sorts the matches, costing
+n × log₂ n comparisons at a quarter of a row read each, for n matches.
+So `ORDER BY ... LIMIT 10` can walk an index for 10 rows rather than
+read and sort thousands.
 
 The plan only decides how many rows are read, never which match: the
 whole `WHERE` is checked on every row found, whichever way it's found.
@@ -632,9 +660,12 @@ every row                                           | 100000 | 100000 |        |
 index orders_item_expires (item_id =, expires_at >) |    167 |    667 | yes    |     167
 ```
 
-Only the table and the `WHERE` are checked, so a mistake elsewhere in
-the statement shows up only when it runs. It needs a value for each
-`?`, as running would. Unlike Postgres's `EXPLAIN`, it shows the ways
+A plan's text ends ", then sort" when it needs one, or ", in order" (and
+", backwards") when it gives the `ORDER BY`'s order.
+
+Only the table, the `WHERE` and the `ORDER BY` are checked, so a mistake
+elsewhere in the statement shows up only when it runs. It needs a value
+for each `?`, as running would. Unlike Postgres's `EXPLAIN`, it shows the ways
 it didn't choose, too.
 ## Keys
 

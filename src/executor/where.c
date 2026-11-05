@@ -1,5 +1,6 @@
 #include "internal.h"
 
+#include <stdint.h>
 #include <stdlib.h>
 
 #include "error.h"
@@ -56,17 +57,26 @@ static int compare_positions(const void *a, const void *b) {
     return (x > y) - (x < y);
 }
 
-// Returns 1 if key, an index entry's, is past the end of plan's range:
-// its leading columns differ from probe's, or the range column is NULL
-// (which sorts last) or beyond upper.
-static int past_range(const Plan *plan, const Value *key,
-                      const Value *probe, const Value *upper) {
-    size_t k = plan->equal_count;
-
-    for (size_t i = 0; i < k; i++) {
+// Whether key's leading columns differ from the values the WHERE pins them to
+// with =, in probe: then the walk has left those entries.
+static int outside_equal_values(const Plan *plan, const Value *key,
+                                const Value *probe) {
+    for (size_t i = 0; i < plan->equal_count; i++) {
         if (value_compare(&key[i], &probe[i]) != 0) {
             return 1;
         }
+    }
+    return 0;
+}
+
+// Walking forwards: whether key is past plan's range, its range column NULL
+// (which sorts last) or beyond upper.
+static int after_range(const Plan *plan, const Value *key, const Value *probe,
+                      const Value *upper) {
+    size_t k = plan->equal_count;
+
+    if (outside_equal_values(plan, key, probe)) {
+        return 1;
     }
     if (!plan->range) {
         return 0;
@@ -79,6 +89,23 @@ static int past_range(const Plan *plan, const Value *key,
         return c > 0 || (c == 0 && !plan->range->upper_inclusive);
     }
     return 0;
+}
+
+// Walking backwards: whether key is before plan's range, below lower. NULLs,
+// which come first this way, are left for the WHERE to turn away.
+static int before_range(const Plan *plan, const Value *key, const Value *probe,
+                        const Value *lower) {
+    size_t k = plan->equal_count;
+
+    if (outside_equal_values(plan, key, probe)) {
+        return 1;
+    }
+    if (!plan->range || plan->range->lower < 0 || key[k].type == TYPE_NULL) {
+        return 0;
+    }
+
+    int c = value_compare(&key[k], lower);
+    return c < 0 || (c == 0 && !plan->range->lower_inclusive);
 }
 
 // e reads no columns, so there's no row to give it. Sets *none if it's NULL, as
@@ -94,15 +121,19 @@ static int evaluate_bound(const Filter *filter, int node, Value *out,
     return 1;
 }
 
-// In table order. out->positions has room for every row.
-static int collect_from_index(const Filter *filter,
+// Walks plan's range of its index, keeping the rows the whole WHERE matches,
+// in index order if in_order and stopping once there are stop_after, or else
+// in table order. out->positions has room for every row.
+static int collect_from_index(const Table *table, const Filter *filter,
                               const CandidatePlans *candidates,
-                              const Plan *plan, PositionList *out,
+                              const Plan *plan, int in_order,
+                              size_t stop_after, PositionList *out,
                               char *error, size_t error_size) {
     const TreeIndex *index = plan->index;
     const IndexableConditions *range = plan->range;
     size_t k = plan->equal_count;
     Value probe[MAX_COLUMNS];
+    Value lower;
     Value upper;
     int none = 0;
     BTreeCursor cursor;
@@ -116,7 +147,7 @@ static int collect_from_index(const Filter *filter,
         }
     }
     if (range && range->lower >= 0 &&
-        !evaluate_bound(filter, range->lower, &probe[k], &none,
+        !evaluate_bound(filter, range->lower, &lower, &none,
                         error, error_size)) {
         return 0;
     }
@@ -129,24 +160,52 @@ static int collect_from_index(const Filter *filter,
         return 1;
     }
 
-    // Start at the first entry with the pinned columns, past the lower
-    // bound if there is one.
-    if (range && range->lower >= 0) {
+    // Start at the end of the range the walk begins from: the first entry
+    // with the pinned columns, past the bound there if there is one.
+    int backwards = plan->ordering == ORDERING_BACKWARDS;
+
+    if (backwards) {
+        if (range && range->upper >= 0) {
+            probe[k] = upper;
+            btree_seek_last(&index->tree, probe, k + 1,
+                            range->upper_inclusive, &cursor);
+        } else {
+            btree_seek_last(&index->tree, probe, k, 1, &cursor);
+        }
+    } else if (range && range->lower >= 0) {
+        probe[k] = lower;
         btree_seek_first(&index->tree, probe, k + 1, range->lower_inclusive,
                          &cursor);
     } else {
         btree_seek_first(&index->tree, probe, k, 1, &cursor);
     }
 
-    while (btree_cursor_valid(&cursor) &&
-           !past_range(plan, btree_cursor_key(&cursor), probe, &upper)) {
-        out->positions[out->count++] = btree_cursor_row(&cursor);
-        btree_cursor_next(&cursor);
+    while (btree_cursor_valid(&cursor) && out->count < stop_after) {
+        const Value *key = btree_cursor_key(&cursor);
+        size_t row = btree_cursor_row(&cursor);
+        int matches;
+
+        if (backwards ? before_range(plan, key, probe, &lower)
+                            : after_range(plan, key, probe, &upper)) {
+            break;
+        }
+        if (!row_matches(&table->rows[row], filter, &matches,
+                         error, error_size)) {
+            return 0;
+        }
+        if (matches) {
+            out->positions[out->count++] = row;
+        }
+
+        if (backwards) {
+            btree_cursor_prev(&cursor);
+        } else {
+            btree_cursor_next(&cursor);
+        }
     }
 
-    // The index gives rows in key order; callers expect table order.
     // positions may be NULL with no rows, which qsort doesn't allow.
-    if (out->count > 1) {
+    if (!in_order && out->count > 1) {
         qsort(out->positions, out->count, sizeof(*out->positions),
               compare_positions);
     }
@@ -175,14 +234,25 @@ static int find_by_key(const Table *table, const Filter *filter,
     return 1;
 }
 
-int where_collect_positions(const Table *table, const Filter *filter,
-                            PositionList *out, char *error, size_t error_size) {
+// Fills out with the positions of the rows filter matches, by the plan
+// choose_plan picks for order: in its order, setting *in_order, if the plan
+// gives it, and then only up to its LIMIT; otherwise in table order.
+static int collect(const Table *table, const Filter *filter,
+                   const RowOrder *order, PositionList *out, int *in_order,
+                   char *error, size_t error_size) {
     CandidatePlans candidates;
 
-    choose_plan(table, filter, &candidates);
+    choose_plan(table, filter, order, &candidates);
 
     const Plan *plan = &candidates.plans[candidates.chosen];
+    size_t stop_after = SIZE_MAX;
     int ok = 1;
+
+    *in_order = candidates.sorted && plan->ordering != ORDERING_NONE;
+    if (*in_order && order->has_limit &&
+        (unsigned long long)order->limit < table->row_count) {
+        stop_after = (size_t)order->limit;
+    }
 
     out->positions = malloc(table->row_count * sizeof(*out->positions));
     out->count = 0;
@@ -210,9 +280,14 @@ int where_collect_positions(const Table *table, const Filter *filter,
             break;
         }
         case PLAN_INDEX:
-            ok = collect_from_index(filter, &candidates, plan, out,
-                                    error, error_size);
-            break;
+            // It checks the WHERE as it walks, to stop early.
+            if (!collect_from_index(table, filter, &candidates, plan,
+                                    *in_order, stop_after, out,
+                                    error, error_size)) {
+                free(out->positions);
+                return 0;
+            }
+            return 1;
     }
 
     // Every plan finds possible rows; the whole WHERE decides which match.
@@ -237,11 +312,20 @@ int where_collect_positions(const Table *table, const Filter *filter,
     return 1;
 }
 
-int where_collect_rows(const Table *table, const Filter *filter, RowList *out,
+int where_collect_positions(const Table *table, const Filter *filter,
+                            PositionList *out, char *error, size_t error_size) {
+    int in_order;
+
+    return collect(table, filter, NULL, out, &in_order, error, error_size);
+}
+
+int where_collect_rows(const Table *table, const Filter *filter,
+                       const RowOrder *order, RowList *out, int *in_order,
                        char *error, size_t error_size) {
     PositionList matched;
 
-    if (!where_collect_positions(table, filter, &matched, error, error_size)) {
+    if (!collect(table, filter, order, &matched, in_order,
+                 error, error_size)) {
         return 0;
     }
 

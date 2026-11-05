@@ -120,4 +120,9 @@ and `b`, and so on, perhaps with a range on the next column. The tree
 finds where those rows start, then reads along the leaves until they
 end. Each row found is still checked against the whole `WHERE`, so the
 index only decides how many rows are read, never which ones match.
-`GRAMMAR.md` says which index a `WHERE` picks.
+
+Reading along the leaves gives the rows in key order, which is what an
+`ORDER BY` on the next column wants: walked forwards for `ASC`, or
+backwards along the leaves' back links for `DESC`, with no sort, and
+stopping at a `LIMIT`. The leaves are linked both ways for this.
+`GRAMMAR.md` says which index a statement picks, and when.

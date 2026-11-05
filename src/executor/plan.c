@@ -20,6 +20,10 @@
 #define COST_READ 1.0
 #define COST_INDEX 4.0
 
+// Cost of comparing two rows while sorting: about Postgres's ratio of a
+// comparison to handling a row.
+#define COST_COMPARE 0.25
+
 // Whether the condition at node compares a column with a value that reads no
 // columns, either way round. If so, sets *column to the column's position,
 // *op to the operator as if the column came first (`5 < c` is `c > 5`), and
@@ -315,6 +319,7 @@ static void add_plan(CandidatePlans *candidates, PlanKind kind, double reads,
     plan->index = NULL;
     plan->equal_count = 0;
     plan->range = NULL;
+    plan->ordering = ORDERING_NONE;
     plan->reads = reads;
     plan->cost = reads * cost_per_row;
 }
@@ -332,15 +337,35 @@ static void add_key_plans(const Table *table, CandidatePlans *candidates) {
         if (i == key->count) {
             add_plan(candidates, PLAN_KEY, table->row_count > 0 ? 1.0 : 0.0,
                      COST_INDEX);
-            candidates->plans[candidates->count - 1].constraint =
-                &table->constraints[c];
+
+            Plan *plan = &candidates->plans[candidates->count - 1];
+
+            plan->constraint = &table->constraints[c];
+            plan->ordering = ORDERING_FORWARDS;  // One row is in order.
         }
     }
 }
 
+// Whether walking index, with its first equal_count columns pinned, gives
+// rows in order's order: its next column is the ORDER BY's, or the ORDER BY
+// is on a pinned column, which then has one value.
+static int index_gives_order(const TreeIndex *index, size_t equal_count,
+                             const RowOrder *order) {
+    if (!order || order->by != ORDER_BY_COLUMN) {
+        return 0;
+    }
+    for (size_t i = 0; i <= equal_count && i < index->columns.count; i++) {
+        if (index->columns.positions[i] == order->column) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 // For each index whose leading columns the WHERE pins with =, or with a range
-// on its first unpinned column.
+// on its first unpinned column, or that gives the ORDER BY's order.
 static void add_index_plans(const Table *table, const ExprContext *ctx,
+                            const RowOrder *order,
                             CandidatePlans *candidates) {
     for (size_t i = 0; i < table->index_count; i++) {
         const TreeIndex *index = &table->indexes[i];
@@ -375,7 +400,9 @@ static void add_index_plans(const Table *table, const ExprContext *ctx,
                 range = b;
             }
         }
-        if (k == 0 && !range) {
+        int gives_order = index_gives_order(index, k, order);
+
+        if (k == 0 && !range && !gives_order) {
             continue;
         }
 
@@ -386,17 +413,58 @@ static void add_index_plans(const Table *table, const ExprContext *ctx,
         plan->index = index;
         plan->equal_count = k;
         plan->range = range;
+
+        // A pinned ORDER BY column has one value, so any direction will do.
+        if (gives_order) {
+            int on_next = k < index->columns.count &&
+                          index->columns.positions[k] == order->column;
+
+            plan->ordering = order->descending && on_next ? ORDERING_BACKWARDS
+                                                          : ORDERING_FORWARDS;
+        }
+    }
+}
+
+// n log2 n comparisons, log2 rounded down.
+static double sort_cost(double rows) {
+    double log2 = 0.0;
+
+    for (double n = rows; n >= 2.0; n /= 2.0) {
+        log2 += 1.0;
+    }
+    return rows * log2 * COST_COMPARE;
+}
+
+// A plan giving rows in order needs no sort, and with a LIMIT stops once that
+// many have matched: it reads the LIMIT's share of the rows it would.
+// Any other plan reads them all, then sorts the matches.
+static void apply_order(CandidatePlans *candidates, const RowOrder *order) {
+    double sort = sort_cost(candidates->matches);
+
+    for (size_t i = 0; i < candidates->count; i++) {
+        Plan *plan = &candidates->plans[i];
+
+        if (plan->ordering == ORDERING_NONE) {
+            plan->cost += sort;
+        } else if (order->has_limit &&
+                   (double)order->limit < candidates->matches) {
+            double share = (double)order->limit / candidates->matches;
+
+            plan->reads *= share;
+            plan->cost *= share;
+        }
     }
 }
 
 void choose_plan(const Table *table, const Filter *filter,
-                 CandidatePlans *candidates) {
+                 const RowOrder *order, CandidatePlans *candidates) {
     for (size_t c = 0; c < MAX_COLUMNS; c++) {
         candidates->indexable[c].equal = -1;
         candidates->indexable[c].lower = -1;
         candidates->indexable[c].upper = -1;
     }
     candidates->count = 0;
+    candidates->sorted = order && order->by != ORDER_BY_NOTHING;
 
     // Reading every row always works, so it's the one to beat.
     add_plan(candidates, PLAN_SCAN, (double)table->row_count, COST_READ);
@@ -405,11 +473,13 @@ void choose_plan(const Table *table, const Filter *filter,
     if (filter) {
         find_indexable_conditions(filter, filter->root, candidates->indexable);
         add_key_plans(table, candidates);
-        add_index_plans(table, filter->ctx, candidates);
+
         double selectivity = estimate_selectivity(filter->ctx, filter->root);
 
         candidates->matches = estimate_rows(table->row_count, selectivity);
     }
+    add_index_plans(table, filter ? filter->ctx : NULL,
+                    candidates->sorted ? order : NULL, candidates);
 
     // A WHERE that pins down a whole key matches at most its one row.
     for (size_t i = 1; i < candidates->count; i++) {
@@ -417,6 +487,10 @@ void choose_plan(const Table *table, const Filter *filter,
             candidates->matches > candidates->plans[i].reads) {
             candidates->matches = candidates->plans[i].reads;
         }
+    }
+
+    if (candidates->sorted) {
+        apply_order(candidates, order);
     }
 
     // The cheapest wins; on a tie, the first considered.
