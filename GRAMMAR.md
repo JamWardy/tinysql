@@ -60,7 +60,9 @@ analyze_stmt  = ANALYZE [ IDENTIFIER ]
 expr          = and_expr { OR and_expr }
 and_expr      = not_expr { AND not_expr }
 not_expr      = NOT not_expr | comparison
-comparison    = additive [ compare_op additive | IS [ NOT ] NULL ]
+comparison    = additive [ compare_op additive | IS [ NOT ] NULL
+                         | [ NOT ] ( LIKE | ILIKE ) additive
+                           [ ESCAPE additive ] ]
 compare_op    = EQUAL | NOT_EQUAL | LESS | LESS_EQUAL
               | GREATER | GREATER_EQUAL
 additive      = multiplicative { ( PLUS | MINUS ) multiplicative }
@@ -118,6 +120,8 @@ UPDATE items SET stock = stock - ? WHERE id = ?;
 SELECT name, price * qty AS total FROM items ORDER BY price * qty DESC;
 SELECT SUM(price * qty), MAX(price) - MIN(price) FROM items;
 SELECT name, age >= 18 FROM users;            -- true or false
+SELECT * FROM items WHERE title ILIKE '%shoe%';  -- see "LIKE"
+SELECT * FROM items WHERE title NOT LIKE '50!%%' ESCAPE '!';
 DROP TABLE users;
 ```
 
@@ -141,6 +145,8 @@ SELECT * FROM users; SELECT 1;     -- one statement at a time
 SELECT * FROM users WHERE a < b < c;  -- comparisons don't chain
 SELECT * FROM users WHERE age = NULL;          -- use IS NULL (see below)
 SELECT * FROM users WHERE age IS 18;           -- IS only tests for NULL
+SELECT * FROM users WHERE id LIKE '1%';        -- LIKE takes TEXT
+SELECT * FROM users WHERE name LIKE 'a\';      -- can't end in the escape
 SELECT * FROM users WHERE age > 1 AND;         -- AND needs a right side
 SELECT * FROM users WHERE (age > 1;            -- unclosed '('
 SELECT * FROM users LIMIT 3 ORDER BY age;      -- ORDER BY comes first
@@ -245,7 +251,7 @@ From loosest to tightest binding:
 | `OR` | `BOOL`s | `BOOL` |
 | `AND` | `BOOL`s | `BOOL` |
 | `NOT` | a `BOOL` | `BOOL` |
-| `=`, `!=` or `<>`, `<`, `<=`, `>`, `>=`, `IS [NOT] NULL` | two values of the same type; `IS` any one | `BOOL` |
+| `=`, `!=` or `<>`, `<`, `<=`, `>`, `>=`, `IS [NOT] NULL`, `[NOT] LIKE`, `[NOT] ILIKE` | two values of the same type; `IS` any one; `LIKE` `TEXT`s | `BOOL` |
 | `+`, `-` | `INT`s | `INT` |
 | `*`, `/`, `%` | `INT`s | `INT` |
 | `-` before a value | an `INT` | `INT` |
@@ -279,6 +285,28 @@ which follow the table under "NULL" below. `NULL` written straight into
 a comparison, as in `age = NULL`, is still an error pointing to
 `IS NULL`.
 
+### LIKE
+
+`a LIKE p` is true when the text a matches the pattern p, as in
+Postgres. In p, `%` matches any run of characters, none included, and
+`_` matches any one character, counting a UTF-8 character such as `é` as
+one; any other character matches only itself, byte for byte. The
+pattern must match the whole text, so `'shoe%'` finds titles starting
+with "shoe" and `'%shoe%'` titles containing it.
+
+`\` before a character makes it match only itself: `'50\%'` matches
+only "50%". `ESCAPE` picks another character instead, as in `LIKE
+'50!%' ESCAPE '!'`, or none with `ESCAPE ''`. It must be one
+character, and a pattern can't end with it.
+
+`ILIKE` is the same but ignores case, for ASCII letters only: `'%shoe%'`
+finds "Running Shoes". `NOT LIKE` and `NOT ILIKE` are true when it
+doesn't match. All three sides must be `TEXT`, and a `NULL` in any of
+them gives `NULL`.
+
+LIKE checks each row it's given; whether rows come from an index is
+the planner's choice (see "Indexes").
+
 ### SET reads the old row
 
 Every expression in a `SET` reads the row as it was before the
@@ -286,8 +314,8 @@ Every expression in a `SET` reads the row as it was before the
 
 ### Keywords
 
-`AS`, `TRUE` and `FALSE` are keywords, so they can't be used as table
-or column names.
+`AS`, `TRUE`, `FALSE`, `LIKE`, `ILIKE` and `ESCAPE` are keywords, so
+they can't be used as table or column names.
 
 ### Headings
 
@@ -516,7 +544,14 @@ last, as `ORDER BY` sorts. So it can find:
   `item_id = 5 AND expires_at = 100`;
 - and then a range in the next column: `item_id = 5 AND expires_at >
   100`, with `<`, `<=`, `>` or `>=`, either way round (`100 < expires_at`
-  too), and a bound at each end if wanted.
+  too), and a bound at each end if wanted;
+- or, for that range, a `LIKE` pattern's fixed start: text sorts byte by
+  byte, so `title LIKE 'shoe%'` can only match from `'shoe'` up to, not
+  including, `'shof'`, as Postgres does with an index in byte order. A
+  pattern with no wildcard is used as `=`. A pattern starting with a
+  wildcard has no fixed start, `ILIKE` matches either case and `NOT
+  LIKE` either side of the range, so those can't use an index. When the
+  column also has a `<`, `>` or the like, that bounds the range instead.
 
 These count only when the `WHERE` needs them, through `AND`s: under an
 `OR` or `NOT` it can't use them. The index only narrows down which rows
@@ -595,6 +630,8 @@ guesses, as fractions of the table's rows:
 | `x > y`, `x >= y`, `x < y`, `x <= y` | a third |
 | `x IS NULL` | 0.5% |
 | `x IS NOT NULL` | 99.5% |
+| `x LIKE y`, `x ILIKE y` | 0.5% |
+| `x NOT LIKE y`, `x NOT ILIKE y` | 99.5% |
 | `a AND b` | fa × fb, as if a and b were unrelated |
 | `a OR b` | fa + fb − fa × fb |
 | `NOT a` | 1 − fa |
@@ -628,6 +665,8 @@ estimated with the real value:
 | `c <> v` | all but the `NULL`s and `c = v` |
 | `c < v` and the like | the common values that satisfy it, plus the histogram's share of the rest: the buckets wholly below v, and part of the one v is in (by position for `INT`, half for `TEXT`) |
 | `c IS NULL` | the `NULL` fraction |
+| `c LIKE p`, `c ILIKE p` | the common values p matches, plus the rest's share as the histogram's values sample it; if none of those match, 0.5% of the rest |
+| `c NOT LIKE p`, `c NOT ILIKE p` | all but the `NULL`s and `c LIKE p` |
 | comparing with `NULL` | none |
 
 Anything else, such as two columns compared, still gets the default
@@ -660,7 +699,9 @@ every row                                           | 100000 | 100000 |        |
 index orders_item_expires (item_id =, expires_at >) |    167 |    667 | yes    |     167
 ```
 
-A plan's text ends ", then sort" when it needs one, or ", in order" (and
+An index walked over a `LIKE` pattern's fixed start shows it as `(title
+LIKE prefix)`, and reads the share of rows estimated between its ends,
+as a range would. A plan's text ends ", then sort" when it needs one, or ", in order" (and
 ", backwards") when it gives the `ORDER BY`'s order.
 
 Only the table, the `WHERE` and the `ORDER BY` are checked, so a mistake

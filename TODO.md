@@ -48,10 +48,12 @@ Done:
       expires_at)` serves `item_id = ? AND expires_at > ?`, as
       `GRAMMAR.md` describes under "Indexes" and `INDEXES.md` explains
       (file format version 7)
+- [x] `LIKE` and `ILIKE`, for searching item titles, with an index used
+      for a pattern's fixed start, as `GRAMMAR.md` describes under
+      "LIKE" and "Indexes"
 
 Next, roughly in order, towards a toy online shop (see "Goal" below):
 
-- [ ] `LIKE`, for searching item titles
 - [ ] A server that links `libtinysql.a`, with a wire protocol for
       statements, parameters and results, as `../DESIGN.md` describes
       it under "Key decisions". Errors carry a code as well as the
@@ -92,10 +94,10 @@ Later, nice but not needed for the shop:
       bigger than memory. Tables and B-tree indexes become pages
 - [ ] Inverted indexes, which map pieces of a column's text to the rows
       that have them, of two kinds:
-  - [ ] Trigrams, for `LIKE '%term%'`, which reads every row without
-        one: each three-letter piece maps to its rows, as Postgres's
-        `pg_trgm` does. A search intersects its pieces' rows, then
-        checks each with `LIKE`
+  - [ ] Trigrams, for `ILIKE '%term%'` and `LIKE '%term%'`, which
+        read every row without one: each three-letter piece maps to its
+        rows, as Postgres's `pg_trgm` does. A search intersects its
+        pieces' rows, then checks each with the pattern
   - [ ] Words, for full-text search: each word maps to its rows, as in
         SQLite's FTS5 or Postgres's `tsvector`. It matches whole words
         rather than substrings, so needs SQL of its own to ask for it,
@@ -143,8 +145,8 @@ Why each item in the list is needed:
 - **`CREATE INDEX`.** The availability check is `WHERE item_id = ? AND
   expires_at > ?` on every order, which reads them all without one. The
   `>` needs the index in order, which `index.c`'s hash isn't.
-- **`LIKE`.** Search finds items whose title contains the term:
-  `title LIKE ?`, with `'%shoe%'` as the value.
+- **`LIKE`.** Search finds items whose title contains the term,
+  ignoring case: `title ILIKE ?`, with `'%shoe%'` as the value.
 - **A server.** The services talk to TinySQL over a socket; see
   `../DESIGN.md` for why.
 - **The file lock.** Two processes on one file each save their own
