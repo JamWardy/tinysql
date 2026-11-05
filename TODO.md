@@ -132,8 +132,7 @@ as an app talks to Postgres, so none of the shop is built here. The
 list above is what the database needs for the shop to work.
 
 The shop is designed in `../DESIGN.md`. Its schema and seed data live
-in `../db/`, not here; `seed/retail.sql` and `shop.db` are the old
-shop's, and get deleted.
+in `../shop/db/`, not here.
 
 What already works: an item by its key, and an order's availability
 check, `SELECT SUM(quantity) FROM orders WHERE item_id = ? AND status =
