@@ -115,11 +115,6 @@ int common_check_type(const Column *column, DataType given, const char *what,
 int common_check_value(const Column *column, DataType given,
                        char *error, size_t error_size);
 
-// Returns <0, 0 or >0 as a is less than, equal to or greater than b,
-// which must have the same type and not be NULL. Text compares byte by
-// byte, so 'B' < 'a' and '10' < '9'.
-int common_compare_values(const Value *a, const Value *b);
-
 // Sets *index to the position of the column called name in table, the
 // position of its value in each row. Every name the SQL uses is looked
 // up this way once, before any row is read.

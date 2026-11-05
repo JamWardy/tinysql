@@ -14,24 +14,11 @@ typedef struct {
 // direction is set here just before sorting.
 static int sort_descending;
 
-// common_compare_values for sorting, where either value may be NULL. NULL
-// sorts after every other value, as in PostgreSQL, so NULLs come last
-// in ascending order and first in descending order.
-static int compare_for_sort(const Value *a, const Value *b) {
-    int a_null = a->type == TYPE_NULL;
-    int b_null = b->type == TYPE_NULL;
-
-    if (a_null || b_null) {
-        return a_null - b_null;
-    }
-    return common_compare_values(a, b);
-}
-
 // Compares two SortRows.
 static int compare_rows(const void *a, const void *b) {
     const SortRow *x = a;
     const SortRow *y = b;
-    int c = compare_for_sort(&x->key, &y->key);
+    int c = value_compare(&x->key, &y->key);
 
     if (sort_descending) {
         c = -c;

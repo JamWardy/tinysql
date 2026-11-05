@@ -350,7 +350,7 @@ static int arithmetic(Operator op, long long a, long long b, long long *out,
 }
 
 static int compare(Operator op, const Value *a, const Value *b) {
-    int c = common_compare_values(a, b);
+    int c = value_compare(a, b);
 
     switch (op) {
         case OP_EQUAL:         return c == 0;
@@ -541,12 +541,12 @@ static int compute_aggregate(const ExprContext *ctx, int node,
                 }
                 break;
             case AGG_MIN:
-                if (common_compare_values(&value, out) < 0) {
+                if (value_compare(&value, out) < 0) {
                     *out = value;
                 }
                 break;
             case AGG_MAX:
-                if (common_compare_values(&value, out) > 0) {
+                if (value_compare(&value, out) > 0) {
                     *out = value;
                 }
                 break;

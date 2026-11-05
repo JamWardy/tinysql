@@ -14,4 +14,8 @@ void copy_text(char *dest, size_t size, const char *src);
 // word out of the middle of a line. start needn't end in '\0'.
 void copy_slice(char *dest, size_t size, const char *start, size_t length);
 
+// Returns a new copy of the string s on the heap, or NULL if memory ran
+// out. The caller frees it.
+char *copy_string(const char *s);
+
 #endif

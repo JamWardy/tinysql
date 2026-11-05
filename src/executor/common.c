@@ -35,23 +35,6 @@ int common_check_value(const Column *column, DataType given,
     return common_check_type(column, given, "value", error, error_size);
 }
 
-int common_compare_values(const Value *a, const Value *b) {
-    switch (a->type) {
-        case TYPE_INT: {
-            long long x = a->as.integer;
-            long long y = b->as.integer;
-            return (x > y) - (x < y);
-        }
-        case TYPE_TEXT:
-            return strcmp(a->as.text, b->as.text);
-        case TYPE_BOOL:
-            return a->as.boolean - b->as.boolean;  // false < true.
-        case TYPE_NULL:
-            break;  // Callers handle NULL first.
-    }
-    return 0;
-}
-
 int common_find_column(const Table *table, const char *name, size_t *index,
                        char *error, size_t error_size) {
     if (!table_find_column(table, name, index)) {

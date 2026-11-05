@@ -4,38 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-// strdup isn't part of C11, so copy strings by hand.
-static char *copy_string(const char *s) {
-    size_t size = strlen(s) + 1;
-    char *copy = malloc(size);
-
-    if (copy) {
-        memcpy(copy, s, size);
-    }
-    return copy;
-}
-
-int value_copy(Value *dest, const Value *src) {
-    Value copy = *src;
-
-    if (src->type == TYPE_TEXT) {
-        copy.as.text = copy_string(src->as.text);
-        if (!copy.as.text) {
-            return 0;
-        }
-    }
-
-    *dest = copy;
-    return 1;
-}
-
-void values_free(Value *values, size_t count) {
-    for (size_t i = 0; i < count; i++) {
-        if (values[i].type == TYPE_TEXT) {
-            free(values[i].as.text);
-        }
-    }
-}
+#include "text.h"
 
 static void free_columns(Column *columns, size_t count) {
     for (size_t i = 0; i < count; i++) {

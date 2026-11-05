@@ -7,6 +7,7 @@ CFLAGS = -std=c11 -Wall -Wextra -Wpedantic -g -Isrc
 # and use through src/tinysql.h.
 LIB_SRCS = src/tinysql.c src/tokeniser.c src/table.c src/index.c \
            src/result.c src/persist.c src/transaction.c src/error.c src/text.c \
+           src/value.c src/btree.c \
            $(PARSER_SRCS) $(EXECUTOR_SRCS)
 # The parser, one file per statement plus what they share.
 PARSER_SRCS = src/parser/parser.c src/parser/common.c \

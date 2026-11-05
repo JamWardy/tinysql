@@ -6,6 +6,7 @@
 
 #include "index.h"
 #include "parser.h"  // For DataType, ColumnDef and ConstraintKind.
+#include "value.h"
 
 // Ownership: a Database owns its Tables, and a Table owns every string
 // and array reachable from it. Functions that take strings or Values copy
@@ -23,18 +24,6 @@ typedef struct {
     DataType type;
     int not_null;  // 1 for NOT NULL; the executor keeps NULLs out.
 } Column;
-
-// A stored value: its column's type, or TYPE_NULL, for which as is
-// unused. When type is TYPE_TEXT, as.text is owned by the Row. Only an
-// expression's value can be TYPE_BOOL, as no column is.
-typedef struct {
-    DataType type;
-    union {
-        long long integer;
-        char *text;
-        int boolean;  // 1 for true, 0 for false.
-    } as;
-} Value;
 
 typedef struct {
     Value *values;
@@ -149,14 +138,6 @@ uint64_t key_hash(const ColumnList *key, const Value *values);
 // Returns 1 if a and b, each laid out like a row, have the same values
 // in every one of key's columns.
 int key_equal(const ColumnList *key, const Value *a, const Value *b);
-
-// Sets *dest to a copy of src, with its own copy of any text.
-// Returns 1, or 0 if memory ran out (*dest is unchanged).
-int value_copy(Value *dest, const Value *src);
-
-// Frees the text owned by the first count values, which may be NULL or
-// any type. The array itself is the caller's.
-void values_free(Value *values, size_t count);
 
 // Appends a row with copies of values, which must hold column_count
 // values, each NULL or of its column's type, and no key already in the
