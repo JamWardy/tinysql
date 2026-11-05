@@ -92,13 +92,13 @@ Later, nice but not needed for the shop:
 - [ ] `OFFSET`, for page 2 of a list; search pages by `id` instead
 - [ ] `GROUP BY`
 - [ ] `JOIN`; until then the services run one query per table
-- [ ] A write-ahead log (WAL): `COMMIT` appends what changed instead of
-      rewriting the whole file, with a checkpoint now and then that
-      writes a full copy, and recovery that replays the log after a
-      crash. The data stays in memory
-- [ ] Storage on disk, after the WAL: the file as fixed-size pages, with
+- [ ] Paged storage: the file as fixed-size pages, with
       a buffer pool holding only the pages in use, so a database can be
       bigger than memory. Tables and B-tree indexes become pages
+- [ ] A write-ahead log (WAL), after paged storage: `COMMIT` appends
+      what changed instead of rewriting the whole file, with a
+      checkpoint now and then, and recovery that replays the log after
+      a crash
 - [ ] Inverted indexes, which map pieces of a column's text to the rows
       that have them, of two kinds:
   - [ ] Trigrams, for `ILIKE '%term%'` and `LIKE '%term%'`, which
