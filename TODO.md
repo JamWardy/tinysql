@@ -82,6 +82,23 @@ Later, nice but not needed for the shop:
 - [ ] `OFFSET`, for page 2 of a list; search pages by `id` instead
 - [ ] `GROUP BY`
 - [ ] `JOIN`; until then the services run one query per table
+- [ ] A write-ahead log (WAL): `COMMIT` appends what changed instead of
+      rewriting the whole file, with a checkpoint now and then that
+      writes a full copy, and recovery that replays the log after a
+      crash. The data stays in memory
+- [ ] Storage on disk, after the WAL: the file as fixed-size pages, with
+      a buffer pool holding only the pages in use, so a database can be
+      bigger than memory. Tables and B-tree indexes become pages
+- [ ] Inverted indexes, which map pieces of a column's text to the rows
+      that have them, of two kinds:
+  - [ ] Trigrams, for `LIKE '%term%'`, which reads every row without
+        one: each three-letter piece maps to its rows, as Postgres's
+        `pg_trgm` does. A search intersects its pieces' rows, then
+        checks each with `LIKE`
+  - [ ] Words, for full-text search: each word maps to its rows, as in
+        SQLite's FTS5 or Postgres's `tsvector`. It matches whole words
+        rather than substrings, so needs SQL of its own to ask for it,
+        as their `MATCH` and `@@` are
 
 Smaller tidy-ups:
 
