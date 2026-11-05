@@ -42,6 +42,9 @@ int parse_delete(Parser *p, Statement *out);
 // transaction.c: BEGIN, COMMIT and ROLLBACK.
 int parse_transaction(Parser *p, Statement *out);
 
+// analyze.c
+int parse_analyze(Parser *p, Statement *out);
+
 // common.c: reading tokens and values.
 
 const Token *peek(const Parser *p);

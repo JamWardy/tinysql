@@ -156,9 +156,9 @@ reasoning. In short:
   `"project"` headers, each group alphabetical.
 - **The executor is a folder**, `src/executor/`: one file per statement
   (`schema.c` for `CREATE` and `DROP`, `insert.c`, `select.c`,
-  `update.c`, `delete.c`, `explain.c`), `expr.c` for checking and
-  evaluating expressions, `plan.c` for choosing how to find a
-  statement's rows, `where.c` for `WHERE` and finding them, `common.c`
+  `update.c`, `delete.c`, `explain.c`, `analyze.c`), `expr.c` for
+  checking and evaluating expressions, `plan.c` for choosing how to find
+  a statement's rows, `where.c` for `WHERE` and finding them, `common.c`
   for what most statements share, and `executor.c` for `execute`, which
   picks the statement's function. `src/executor.h` is the folder's only
   public header; `internal.h` is shared between the folder's files and

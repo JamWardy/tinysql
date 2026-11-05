@@ -30,6 +30,7 @@ static void find_where(const Statement *stmt, int *has_where, int *where) {
         case STMT_BEGIN:
         case STMT_COMMIT:
         case STMT_ROLLBACK:
+        case STMT_ANALYZE:
             break;  // The parser allows EXPLAIN on none of these.
     }
 }

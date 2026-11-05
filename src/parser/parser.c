@@ -4,7 +4,7 @@
 #include "text.h"
 
 // statement = ( create_stmt | insert_stmt | select_stmt | delete_stmt
-//             | update_stmt | drop_stmt | transaction_stmt
+//             | update_stmt | drop_stmt | transaction_stmt | analyze_stmt
 //             | EXPLAIN ( select_stmt | update_stmt | delete_stmt ) )
 //             SEMICOLON EOF
 int parse(const TokenList *tokens, Statement *out,
@@ -40,6 +40,10 @@ int parse(const TokenList *tokens, Statement *out,
             ok = parse_drop(&p, out);
             break;
 
+        case TOKEN_ANALYZE:
+            ok = parse_analyze(&p, out);
+            break;
+
         case TOKEN_BEGIN:
         case TOKEN_COMMIT:
         case TOKEN_ROLLBACK:
@@ -47,8 +51,9 @@ int parse(const TokenList *tokens, Statement *out,
             break;
 
         default:
-            error_expected(&p, "CREATE, INSERT, SELECT, UPDATE, DELETE, "
-                               "DROP, BEGIN, COMMIT, ROLLBACK or EXPLAIN");
+            error_expected(&p, "CREATE, INSERT, SELECT, UPDATE, DELETE, DROP, "
+                               "BEGIN, COMMIT, ROLLBACK, EXPLAIN or "
+                               "ANALYZE");
             ok = 0;
             break;
     }

@@ -15,14 +15,15 @@ PARSER_SRCS = src/parser/parser.c src/parser/common.c \
               src/parser/schema.c \
               src/parser/insert.c src/parser/select.c \
               src/parser/update.c src/parser/delete.c \
-              src/parser/transaction.c
+              src/parser/transaction.c src/parser/analyze.c
 # The executor, one file per statement plus what they share.
 EXECUTOR_SRCS = src/executor/executor.c src/executor/common.c \
                 src/executor/expr.c src/executor/where.c \
                 src/executor/schema.c \
                 src/executor/insert.c src/executor/select.c \
                 src/executor/update.c src/executor/delete.c \
-                src/executor/plan.c src/executor/explain.c
+                src/executor/plan.c src/executor/explain.c \
+                src/executor/analyze.c
 # The REPL: reading input, printing results and the .tables and .schema
 # commands.
 APP_SRCS = src/repl/main.c src/repl/input.c src/repl/print.c \

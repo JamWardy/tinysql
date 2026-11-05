@@ -31,6 +31,7 @@ static void table_free(Table *table) {
 
     free(table->rows);
     free_columns(table->columns, table->column_count);
+    stats_free(table->stats, table->column_count);
     free(table->name);
 }
 
@@ -319,6 +320,22 @@ static int row_has_key(size_t row, const void *context) {
 
     return key_equal(search->key, search->table->rows[row].values,
                      search->values);
+}
+
+void stats_free(ColumnStats *stats, size_t column_count) {
+    if (!stats) {
+        return;
+    }
+    for (size_t c = 0; c < column_count; c++) {
+        values_free(stats[c].common, stats[c].common_count);
+        values_free(stats[c].histogram, stats[c].histogram_count);
+    }
+    free(stats);
+}
+
+void table_set_stats(Table *table, ColumnStats *stats) {
+    stats_free(table->stats, table->column_count);
+    table->stats = stats;
 }
 
 int table_find_key(const Table *table, const Constraint *constraint,

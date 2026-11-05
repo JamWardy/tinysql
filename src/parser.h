@@ -206,7 +206,8 @@ typedef enum {
     STMT_DROP_INDEX, // Needs only index_name.
     STMT_BEGIN,      // These three need nothing more.
     STMT_COMMIT,
-    STMT_ROLLBACK
+    STMT_ROLLBACK,
+    STMT_ANALYZE     // table_name, or empty for every table.
 } StatementType;
 
 // What the parser produces and the executor consumes.

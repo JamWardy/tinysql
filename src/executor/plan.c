@@ -1,8 +1,11 @@
 #include "internal.h"
 
+#include "tinysql.h"  // For TINYSQL_MAX_ERROR.
+
 // Planning: the ways a statement could find its rows, an estimate of
 // how many rows each would read, a cost for each, and the cheapest.
-// Without statistics, estimates use Postgres's default guesses.
+// Estimates come from ANALYZE's statistics, or Postgres's default guesses
+// without them.
 
 // Fraction of rows guessed to match `x = y`, or anything else the planner can't
 // estimate.
@@ -17,50 +20,62 @@
 #define COST_READ 1.0
 #define COST_INDEX 4.0
 
+// Whether the condition at node compares a column with a value that reads no
+// columns, either way round. If so, sets *column to the column's position,
+// *op to the operator as if the column came first (`5 < c` is `c > 5`), and
+// *value to the value's node.
+static int column_comparison(const ExprContext *ctx, int node, size_t *column,
+                             Operator *op, int *value) {
+    const ExprNode *n = &ctx->nodes[node];
+
+    if (n->kind != EXPR_BINARY) {
+        return 0;
+    }
+
+    int left = n->as.op.left;
+    int right = n->as.op.right;
+
+    *op = n->as.op.op;
+    if (ctx->nodes[left].kind == EXPR_COLUMN &&
+        !expr_uses_columns(ctx->nodes, right)) {
+        *column = ctx->columns[left];
+        *value = right;
+        return 1;
+    }
+    if (ctx->nodes[right].kind == EXPR_COLUMN &&
+        !expr_uses_columns(ctx->nodes, left)) {
+        *column = ctx->columns[right];
+        *value = left;
+        switch (*op) {
+            case OP_LESS:          *op = OP_GREATER; break;
+            case OP_LESS_EQUAL:    *op = OP_GREATER_EQUAL; break;
+            case OP_GREATER:       *op = OP_LESS; break;
+            case OP_GREATER_EQUAL: *op = OP_LESS_EQUAL; break;
+            default:               break;
+        }
+        return 1;
+    }
+    return 0;
+}
+
 static void find_indexable_conditions(const Filter *filter, int node,
                                       IndexableConditions *indexable) {
     const ExprContext *ctx = filter->ctx;
     const ExprNode *n = &ctx->nodes[node];
-
-    if (n->kind != EXPR_BINARY) {
-        return;
-    }
-
-    Operator op = n->as.op.op;
-    int left = n->as.op.left;
-    int right = n->as.op.right;
-
-    if (op == OP_AND) {
-        find_indexable_conditions(filter, left, indexable);
-        find_indexable_conditions(filter, right, indexable);
-        return;
-    }
-
-    int column;
+    size_t column;
+    Operator op;
     int value;
 
-    if (ctx->nodes[left].kind == EXPR_COLUMN &&
-        !expr_uses_columns(ctx->nodes, right)) {
-        column = left;
-        value = right;
-    } else if (ctx->nodes[right].kind == EXPR_COLUMN &&
-               !expr_uses_columns(ctx->nodes, left)) {
-        column = right;
-        value = left;
-
-        // `5 < c` is `c > 5`.
-        switch (op) {
-            case OP_LESS:          op = OP_GREATER; break;
-            case OP_LESS_EQUAL:    op = OP_GREATER_EQUAL; break;
-            case OP_GREATER:       op = OP_LESS; break;
-            case OP_GREATER_EQUAL: op = OP_LESS_EQUAL; break;
-            default:               break;
-        }
-    } else {
+    if (n->kind == EXPR_BINARY && n->as.op.op == OP_AND) {
+        find_indexable_conditions(filter, n->as.op.left, indexable);
+        find_indexable_conditions(filter, n->as.op.right, indexable);
+        return;
+    }
+    if (!column_comparison(ctx, node, &column, &op, &value)) {
         return;
     }
 
-    IndexableConditions *b = &indexable[ctx->columns[column]];
+    IndexableConditions *b = &indexable[column];
 
     switch (op) {
         case OP_EQUAL:
@@ -81,41 +96,8 @@ static void find_indexable_conditions(const Filter *filter, int node,
     }
 }
 
-// By Postgres's rules for when there are no statistics.
-static double estimate(const ExprContext *ctx, int node) {
-    const ExprNode *n = &ctx->nodes[node];
-
-    switch (n->kind) {
-        case EXPR_LITERAL:
-            // TRUE matches every row; FALSE and NULL none.
-            return n->as.literal.kind == LITERAL_BOOL &&
-                   n->as.literal.as.boolean ? 1.0 : 0.0;
-        case EXPR_UNARY:
-            if (n->as.op.op == OP_NOT) {
-                return 1.0 - estimate(ctx, n->as.op.left);
-            }
-            return DEFAULT_EQUAL;
-        case EXPR_IS_NULL:
-            return n->as.is_null.negated ? 1.0 - DEFAULT_NULL : DEFAULT_NULL;
-        case EXPR_BINARY:
-            break;
-        case EXPR_COLUMN:
-        case EXPR_AGGREGATE:
-            return DEFAULT_EQUAL;
-    }
-
-    double left;
-    double right;
-
-    switch (n->as.op.op) {
-        case OP_AND:
-            // Assumes the two are independent, as Postgres does.
-            return estimate(ctx, n->as.op.left) *
-                   estimate(ctx, n->as.op.right);
-        case OP_OR:
-            left = estimate(ctx, n->as.op.left);
-            right = estimate(ctx, n->as.op.right);
-            return left + right - left * right;
+static double default_selectivity(Operator op) {
+    switch (op) {
         case OP_EQUAL:
             return DEFAULT_EQUAL;
         case OP_NOT_EQUAL:
@@ -132,9 +114,185 @@ static double estimate(const ExprContext *ctx, int node) {
         case OP_MULTIPLY:
         case OP_DIVIDE:
         case OP_REMAINDER:
+        case OP_AND:
+        case OP_OR:
             break;
     }
     return DEFAULT_EQUAL;
+}
+
+// The value is either a common one, with its own fraction, or shares what's
+// left evenly with the other values that aren't.
+static double equal_selectivity(const ColumnStats *stats, const Value *value) {
+    double rest = 1.0 - stats->null_fraction;
+    double others = stats->distinct;
+
+    for (size_t i = 0; i < stats->common_count; i++) {
+        if (value_compare(&stats->common[i], value) == 0) {
+            return stats->common_fraction[i];
+        }
+        rest -= stats->common_fraction[i];
+        others -= 1.0;
+    }
+    return others > 0.0 && rest > 0.0 ? rest / others : 0.0;
+}
+
+// How far through the bucket from low to high value is, from 0 to 1. INTs by
+// position; TEXT can't be placed so simply, so half way.
+static double position_in_bucket(const Value *low, const Value *high,
+                                 const Value *value) {
+    if (value->type != TYPE_INT) {
+        return 0.5;
+    }
+
+    double span = (double)high->as.integer - (double)low->as.integer;
+    double into = (double)value->as.integer - (double)low->as.integer;
+
+    return span > 0.0 ? into / span : 0.5;
+}
+
+// Fraction of the histogram's values that sort before value.
+static double fraction_below(const ColumnStats *stats, const Value *value) {
+    size_t last = stats->histogram_count - 1;
+
+    if (value_compare(value, &stats->histogram[0]) < 0) {
+        return 0.0;
+    }
+    if (value_compare(value, &stats->histogram[last]) >= 0) {
+        return 1.0;
+    }
+
+    size_t i = 0;
+    while (value_compare(value, &stats->histogram[i + 1]) >= 0) {
+        i++;
+    }
+    return ((double)i + position_in_bucket(&stats->histogram[i],
+                                           &stats->histogram[i + 1], value)) /
+           (double)last;
+}
+
+static int holds(int compared, Operator op) {
+    switch (op) {
+        case OP_LESS:          return compared < 0;
+        case OP_LESS_EQUAL:    return compared <= 0;
+        case OP_GREATER:       return compared > 0;
+        case OP_GREATER_EQUAL: return compared >= 0;
+        default:               return 0;
+    }
+}
+
+// The common values that satisfy op, plus the histogram's share of the rest.
+static double range_selectivity(const ColumnStats *stats, const Value *value,
+                                Operator op) {
+    double result = 0.0;
+    double rest = 1.0 - stats->null_fraction;
+
+    for (size_t i = 0; i < stats->common_count; i++) {
+        if (holds(value_compare(&stats->common[i], value), op)) {
+            result += stats->common_fraction[i];
+        }
+        rest -= stats->common_fraction[i];
+    }
+    if (stats->histogram_count >= 2 && rest > 0.0) {
+        double below = fraction_below(stats, value);
+        int less = op == OP_LESS || op == OP_LESS_EQUAL;
+
+        result += rest * (less ? below : 1.0 - below);
+    }
+    return result;
+}
+
+// `column op value`, from the column's statistics. Without them, or when the
+// value can't be worked out (the statement will report why when it runs), the
+// default guess.
+static double comparison_selectivity(const ExprContext *ctx, size_t column,
+                                     Operator op, int value_node) {
+    const ColumnStats *stats =
+        ctx->table->stats ? &ctx->table->stats[column] : NULL;
+    char error[TINYSQL_MAX_ERROR];
+    Value value;
+
+    if (!stats || !expr_evaluate(ctx, value_node, NULL, &value,
+                                 error, sizeof(error))) {
+        return default_selectivity(op);
+    }
+    if (value.type == TYPE_NULL) {
+        return 0.0;  // Comparing with NULL is never true.
+    }
+
+    double equal;
+
+    switch (op) {
+        case OP_EQUAL:
+            return equal_selectivity(stats, &value);
+        case OP_NOT_EQUAL:
+            equal = equal_selectivity(stats, &value);
+            return 1.0 - stats->null_fraction - equal > 0.0
+                       ? 1.0 - stats->null_fraction - equal : 0.0;
+        case OP_LESS:
+        case OP_LESS_EQUAL:
+        case OP_GREATER:
+        case OP_GREATER_EQUAL:
+            return range_selectivity(stats, &value, op);
+        default:
+            return default_selectivity(op);
+    }
+}
+
+// From the statistics where a condition compares a column with a value or
+// tests it for NULL; otherwise by Postgres's rules for when there are none.
+static double estimate_selectivity(const ExprContext *ctx, int node) {
+    const ExprNode *n = &ctx->nodes[node];
+    size_t column;
+    Operator op;
+    int value;
+
+    switch (n->kind) {
+        case EXPR_LITERAL:
+            // TRUE matches every row; FALSE and NULL none.
+            return n->as.literal.kind == LITERAL_BOOL &&
+                   n->as.literal.as.boolean ? 1.0 : 0.0;
+        case EXPR_UNARY:
+            if (n->as.op.op == OP_NOT) {
+                return 1.0 - estimate_selectivity(ctx, n->as.op.left);
+            }
+            return DEFAULT_EQUAL;
+        case EXPR_IS_NULL: {
+            int operand = n->as.is_null.operand;
+            double nulls = DEFAULT_NULL;
+
+            if (ctx->nodes[operand].kind == EXPR_COLUMN && ctx->table->stats) {
+                nulls = ctx->table->stats[ctx->columns[operand]].null_fraction;
+            }
+            return n->as.is_null.negated ? 1.0 - nulls : nulls;
+        }
+        case EXPR_BINARY:
+            break;
+        case EXPR_COLUMN:
+        case EXPR_AGGREGATE:
+            return DEFAULT_EQUAL;
+    }
+
+    double left;
+    double right;
+
+    switch (n->as.op.op) {
+        case OP_AND:
+            // Assumes the two are independent, as Postgres does.
+            return estimate_selectivity(ctx, n->as.op.left) *
+                   estimate_selectivity(ctx, n->as.op.right);
+        case OP_OR:
+            left = estimate_selectivity(ctx, n->as.op.left);
+            right = estimate_selectivity(ctx, n->as.op.right);
+            return left + right - left * right;
+        default:
+            break;
+    }
+
+    if (column_comparison(ctx, node, &column, &op, &value)) {
+        return comparison_selectivity(ctx, column, op, value);
+    }
+    return default_selectivity(n->as.op.op);
 }
 
 // rows times fraction, but at least 1 if the table has any rows, as
@@ -182,7 +340,8 @@ static void add_key_plans(const Table *table, CandidatePlans *candidates) {
 
 // For each index whose leading columns the WHERE pins with =, or with a range
 // on its first unpinned column.
-static void add_index_plans(const Table *table, CandidatePlans *candidates) {
+static void add_index_plans(const Table *table, const ExprContext *ctx,
+                            CandidatePlans *candidates) {
     for (size_t i = 0; i < table->index_count; i++) {
         const TreeIndex *index = &table->indexes[i];
         const IndexableConditions *range = NULL;
@@ -191,17 +350,29 @@ static void add_index_plans(const Table *table, CandidatePlans *candidates) {
 
         while (k < index->columns.count &&
                candidates->indexable[index->columns.positions[k]].equal >= 0) {
-            fraction *= DEFAULT_EQUAL;
+            size_t column = index->columns.positions[k];
+
+            fraction *= comparison_selectivity(
+                ctx, column, OP_EQUAL, candidates->indexable[column].equal);
             k++;
         }
         if (k < index->columns.count) {
-            const IndexableConditions *b =
-                &candidates->indexable[index->columns.positions[k]];
+            size_t column = index->columns.positions[k];
+            const IndexableConditions *b = &candidates->indexable[column];
 
+            if (b->lower >= 0) {
+                fraction *= comparison_selectivity(
+                    ctx, column,
+                    b->lower_inclusive ? OP_GREATER_EQUAL : OP_GREATER,
+                    b->lower);
+            }
+            if (b->upper >= 0) {
+                fraction *= comparison_selectivity(
+                    ctx, column, b->upper_inclusive ? OP_LESS_EQUAL : OP_LESS,
+                    b->upper);
+            }
             if (b->lower >= 0 || b->upper >= 0) {
                 range = b;
-                fraction *= b->lower >= 0 ? DEFAULT_RANGE : 1.0;
-                fraction *= b->upper >= 0 ? DEFAULT_RANGE : 1.0;
             }
         }
         if (k == 0 && !range) {
@@ -234,9 +405,10 @@ void choose_plan(const Table *table, const Filter *filter,
     if (filter) {
         find_indexable_conditions(filter, filter->root, candidates->indexable);
         add_key_plans(table, candidates);
-        add_index_plans(table, candidates);
-        candidates->matches = estimate_rows(table->row_count,
-                                    estimate(filter->ctx, filter->root));
+        add_index_plans(table, filter->ctx, candidates);
+        double selectivity = estimate_selectivity(filter->ctx, filter->root);
+
+        candidates->matches = estimate_rows(table->row_count, selectivity);
     }
 
     // A WHERE that pins down a whole key matches at most its one row.

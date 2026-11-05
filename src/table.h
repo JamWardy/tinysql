@@ -45,6 +45,28 @@ typedef struct {
 // Per table, from CREATE INDEX.
 #define MAX_INDEXES 16
 
+#define MAX_COMMON_VALUES 10
+#define HISTOGRAM_BUCKETS 20
+
+// What ANALYZE found about one column's values, as fractions of the rows,
+// so they still apply as the table grows. The Values are copies it owns.
+typedef struct {
+    double null_fraction;
+    double distinct;  // Distinct values, NULL aside.
+
+    // The most common values, most common first, and the fraction of rows
+    // holding each.
+    Value common[MAX_COMMON_VALUES];
+    double common_fraction[MAX_COMMON_VALUES];
+    size_t common_count;
+
+    // The other values, sorted and split into buckets of equal counts: bucket
+    // i holds those from histogram[i] to histogram[i + 1]. 0 bounds when every
+    // value is a common one.
+    Value histogram[HISTOGRAM_BUCKETS + 1];
+    size_t histogram_count;
+} ColumnStats;
+
 // From CREATE INDEX: an entry per row, keyed by copies of its values in
 // columns.
 typedef struct {
@@ -75,6 +97,8 @@ typedef struct {
     // The highest ID the key has had, given or chosen, so a deleted row's ID is
     // never chosen again. 0 without autoincrement.
     long long last_id;
+
+    ColumnStats *stats;  // One per column from ANALYZE, or NULL before it.
 } Table;
 
 typedef struct {
@@ -120,6 +144,13 @@ int table_add_index(Table *table, const char *name,
                     const ColumnList *columns);
 
 void table_drop_index(Table *table, size_t index);
+
+// Replaces the table's statistics with stats, one per column, which the
+// table takes over.
+void table_set_stats(Table *table, ColumnStats *stats);
+
+// Frees the copies the column_count stats hold, and the array.
+void stats_free(ColumnStats *stats, size_t column_count);
 
 // Uses the key's index. A key with a NULL is never found.
 //

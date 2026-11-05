@@ -18,7 +18,7 @@ token types produced by the tokeniser in `src/tokeniser.h`.
 
 ```
 statement     = ( create_stmt | insert_stmt | select_stmt | delete_stmt
-                | update_stmt | drop_stmt | transaction_stmt
+                | update_stmt | drop_stmt | transaction_stmt | analyze_stmt
                 | EXPLAIN ( select_stmt | update_stmt | delete_stmt ) )
                 SEMICOLON EOF
 
@@ -54,6 +54,8 @@ assignment    = IDENTIFIER EQUAL expr
 drop_stmt     = DROP ( TABLE | INDEX ) IDENTIFIER
 
 transaction_stmt = BEGIN | COMMIT | ROLLBACK
+
+analyze_stmt  = ANALYZE [ IDENTIFIER ]
 
 expr          = and_expr { OR and_expr }
 and_expr      = not_expr { AND not_expr }
@@ -554,8 +556,9 @@ The plan only decides how many rows are read, never which match: the
 whole `WHERE` is checked on every row found, whichever way it's found.
 A bad estimate makes a statement slow, never wrong.
 
-Without statistics, the estimates are Postgres's default guesses, as
-fractions of the table's rows:
+Estimates come from the table's statistics, once `ANALYZE` has gathered
+them (see below). Without statistics, they're Postgres's default
+guesses, as fractions of the table's rows:
 
 | Condition | Fraction |
 |---|---|
@@ -574,6 +577,43 @@ value or an expression such as `a + b`, as in Postgres.
 
 An estimate of under one row counts as one, unless the table is empty,
 and a `WHERE` that pins a whole key matches at most one row.
+
+### ANALYZE
+
+`ANALYZE orders;` reads every row of `orders`, and `ANALYZE;` every row
+of every table, and keeps statistics on each column, as Postgres does:
+
+- the fraction of rows where it's `NULL`;
+- how many distinct values it has;
+- its most common values, up to 10, each with the fraction of rows that
+  have it: those that occur more than once and more often than average,
+  or every value when there are 10 or fewer;
+- a histogram of the rest: 21 of them, evenly spaced through their
+  sorted order, so each of the 20 gaps holds about the same number.
+
+From these, a comparison between a column and a value, or a `?`, is
+estimated with the real value:
+
+| Condition | Fraction |
+|---|---|
+| `c = v` | v's own, if it's a common value; else what the common values leave, shared evenly by the other distinct values |
+| `c <> v` | all but the `NULL`s and `c = v` |
+| `c < v` and the like | the common values that satisfy it, plus the histogram's share of the rest: the buckets wholly below v, and part of the one v is in (by position for `INT`, half for `TEXT`) |
+| `c IS NULL` | the `NULL` fraction |
+| comparing with `NULL` | none |
+
+Anything else, such as two columns compared, still gets the default
+guess, and so does a value that can't be worked out, as with an
+overflow; the statement reports that when it runs. Conditions joined by
+`AND` are still multiplied as if unrelated, even two on the same column,
+such as `a > 5 AND a < 9`.
+
+Statistics are fractions, so they scale with the table as it grows, but
+they're only as fresh as the last `ANALYZE`: if most orders become
+`PENDING`, the planner keeps estimating from the old mix until it's run
+again. They're saved in the file, and `ROLLBACK` undoes an `ANALYZE` like
+any change. `ANALYZE` is a keyword, so it can't be used as a table or
+column name.
 
 ### EXPLAIN
 

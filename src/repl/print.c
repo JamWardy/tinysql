@@ -99,6 +99,7 @@ void print_result(const Result *result) {
         case STMT_DROP:
         case STMT_CREATE_INDEX:
         case STMT_DROP_INDEX:
+        case STMT_ANALYZE:
         case STMT_BEGIN:
         case STMT_COMMIT:
         case STMT_ROLLBACK:

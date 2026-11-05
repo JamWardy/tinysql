@@ -24,12 +24,20 @@
 //                u8 index_count
 //                per index:  string name  u8 column_count
 //                            per column: u8 position
+//                u8 has_stats
+//                if 1, per column: double null_fraction  double distinct
+//                                  u8 common_count
+//                                  per common value: value  double fraction
+//                                  u8 histogram_count
+//                                  per bound: value
 //                u64 row_count
 //                per row:    null bitmap
 //                            per non-null value: INT as u64, TEXT as string
 //
 // A string is a u32 byte count, then the bytes, with no '\0'. Negative INTs are
-// stored as their two's complement.
+// stored as their two's complement. A double is the 8 bytes of its IEEE 754
+// form, as a u64, so it reloads exactly. A value in the statistics is its
+// column's type, never NULL.
 //
 // The null bitmap has a bit per column, rounded up to whole bytes: bit i
 // (bitmap[i / 8] & (1 << (i % 8))) set means column i is NULL, and a NULL has
@@ -50,8 +58,9 @@
 // Index names are unique, and no table has one. Indexes, hash and B-tree,
 // aren't stored: they're rebuilt as the rows are read.
 //
-// Older versions are still read, and are saved as version 7:
-//   version 6 has no indexes.
+// Older versions are still read, and are saved as version 8:
+//   version 7 has no statistics.
+//   version 6 also has no indexes.
 //   version 5 also has no AUTOINCREMENT, and no last_id.
 //   version 4 also has no UNIQUE.
 //   version 3 has no constraints.
@@ -60,7 +69,7 @@
 
 #define MAGIC "TSQL"
 #define MAGIC_LENGTH 4
-#define FORMAT_VERSION 7
+#define FORMAT_VERSION 8
 
 // Type codes in the file. Fixed here rather than taken from DataType,
 // so reordering that enum can't change the meaning of existing files.
@@ -129,6 +138,41 @@ static void write_row(FILE *file, const Row *row) {
     }
 }
 
+static void write_double(FILE *file, double d) {
+    uint64_t bits;
+
+    memcpy(&bits, &d, sizeof(bits));
+    write_uint(file, bits, 8);
+}
+
+static void write_value(FILE *file, const Value *value) {
+    if (value->type == TYPE_INT) {
+        write_uint(file, (uint64_t)value->as.integer, 8);
+    } else {
+        write_string(file, value->as.text);
+    }
+}
+
+static void write_stats(FILE *file, const Table *table) {
+    write_uint(file, table->stats ? 1 : 0, 1);
+
+    for (size_t c = 0; table->stats && c < table->column_count; c++) {
+        const ColumnStats *stats = &table->stats[c];
+
+        write_double(file, stats->null_fraction);
+        write_double(file, stats->distinct);
+        write_uint(file, stats->common_count, 1);
+        for (size_t i = 0; i < stats->common_count; i++) {
+            write_value(file, &stats->common[i]);
+            write_double(file, stats->common_fraction[i]);
+        }
+        write_uint(file, stats->histogram_count, 1);
+        for (size_t i = 0; i < stats->histogram_count; i++) {
+            write_value(file, &stats->histogram[i]);
+        }
+    }
+}
+
 static void write_table(FILE *file, const Table *table) {
     write_string(file, table->name);
     write_uint(file, table->column_count, 4);
@@ -177,6 +221,8 @@ static void write_table(FILE *file, const Table *table) {
             write_uint(file, index->columns.positions[c], 1);
         }
     }
+
+    write_stats(file, table);
     write_uint(file, table->row_count, 8);
 
     for (size_t r = 0; r < table->row_count; r++) {
@@ -672,6 +718,115 @@ static int check_index_names(Reader *r, const Database *db) {
     return 1;
 }
 
+static int read_double(Reader *r, double *out) {
+    uint64_t bits;
+
+    if (!read_uint(r, 8, &bits)) {
+        return 0;
+    }
+    memcpy(out, &bits, sizeof(*out));
+    return 1;
+}
+
+// A fraction of the rows, from 0 to 1. NaN fails the check too.
+static int read_fraction(Reader *r, const Table *table, double *out) {
+    if (!read_double(r, out)) {
+        return 0;
+    }
+    if (!(*out >= 0.0 && *out <= 1.0)) {
+        return read_fail(r, "table '%s' has bad statistics", table->name);
+    }
+    return 1;
+}
+
+static int read_value(Reader *r, DataType type, Value *out) {
+    out->type = type;
+    if (type == TYPE_INT) {
+        uint64_t n;
+
+        if (!read_uint(r, 8, &n)) {
+            return 0;
+        }
+        out->as.integer = to_signed(n);
+        return 1;
+    }
+    return read_text(r, &out->as.text);
+}
+
+// Fills stats for column from the file. On failure, stats holds only what it
+// can free.
+static int read_column_stats(Reader *r, const Table *table,
+                             const Column *column, ColumnStats *stats) {
+    uint64_t count;
+
+    if (!read_fraction(r, table, &stats->null_fraction) ||
+        !read_double(r, &stats->distinct) || !read_uint(r, 1, &count)) {
+        return 0;
+    }
+    if (!(stats->distinct >= 0.0 && stats->distinct < 1e19) ||
+        count > MAX_COMMON_VALUES) {
+        return read_fail(r, "table '%s' has bad statistics", table->name);
+    }
+
+    for (uint64_t i = 0; i < count; i++) {
+        if (!read_value(r, column->type, &stats->common[i])) {
+            return 0;
+        }
+        stats->common_count++;
+        if (!read_fraction(r, table, &stats->common_fraction[i])) {
+            return 0;
+        }
+    }
+
+    if (!read_uint(r, 1, &count)) {
+        return 0;
+    }
+    if (count == 1 || count > HISTOGRAM_BUCKETS + 1) {
+        return read_fail(r, "table '%s' has bad statistics", table->name);
+    }
+    for (uint64_t i = 0; i < count; i++) {
+        if (!read_value(r, column->type, &stats->histogram[i])) {
+            return 0;
+        }
+        stats->histogram_count++;
+        if (i > 0 && value_compare(&stats->histogram[i - 1],
+                                   &stats->histogram[i]) > 0) {
+            return read_fail(r, "table '%s' has a histogram out of order",
+                             table->name);
+        }
+    }
+    return 1;
+}
+
+// Files before version 8 have no statistics.
+static int read_stats(Reader *r, Table *table) {
+    uint64_t has_stats = 0;
+
+    if (r->version >= 8 && !read_uint(r, 1, &has_stats)) {
+        return 0;
+    }
+    if (has_stats > 1) {
+        return read_fail(r, "table '%s' has bad statistics", table->name);
+    }
+    if (!has_stats) {
+        return 1;
+    }
+
+    ColumnStats *stats = calloc(table->column_count, sizeof(*stats));
+
+    if (!stats) {
+        return read_fail(r, "out of memory");
+    }
+    for (size_t c = 0; c < table->column_count; c++) {
+        if (!read_column_stats(r, table, &table->columns[c], &stats[c])) {
+            stats_free(stats, table->column_count);
+            return 0;
+        }
+    }
+    table_set_stats(table, stats);
+    return 1;
+}
+
 static int read_table(Reader *r, Database *db) {
     char name[MAX_TOKEN_LENGTH];
     ColumnDef columns[MAX_COLUMNS];
@@ -715,7 +870,7 @@ static int read_table(Reader *r, Database *db) {
     // No other table is created while reading constraints and rows, so
     // table stays valid.
     if (!read_constraints(r, table) || !read_autoincrement(r, table) ||
-        !read_indexes(r, table)) {
+        !read_indexes(r, table) || !read_stats(r, table)) {
         return 0;
     }
 

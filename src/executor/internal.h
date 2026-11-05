@@ -59,6 +59,10 @@ int execute_create_index(Database *db, const Statement *stmt,
 int execute_drop_index(Database *db, const Statement *stmt,
                        char *error, size_t error_size);
 
+// analyze.c: statistics for one table, or every table.
+int execute_analyze(Database *db, const Statement *stmt,
+                    char *error, size_t error_size);
+
 // explain.c: for EXPLAIN, fills result with a row per plan considered.
 int execute_explain(Database *db, const Statement *stmt,
                     const ParamList *params, Result *result,
@@ -195,7 +199,8 @@ typedef struct {
     double matches;  // Estimated rows the whole WHERE matches.
 } CandidatePlans;
 
-// filter may be NULL, for every row. Reads no rows and evaluates nothing.
+// filter may be NULL, for every row. Reads no rows, but with statistics it
+// works out the values conditions compare with.
 void choose_plan(const Table *table, const Filter *filter,
                  CandidatePlans *candidates);
 

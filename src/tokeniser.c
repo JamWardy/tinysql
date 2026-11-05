@@ -70,6 +70,7 @@ const char *token_type_name(TokenType type) {
         case TOKEN_INDEX:          return "INDEX";
         case TOKEN_ON:             return "ON";
         case TOKEN_EXPLAIN:        return "EXPLAIN";
+        case TOKEN_ANALYZE:        return "ANALYZE";
         case TOKEN_EOF:            return "EOF";
     }
     return "UNKNOWN";
@@ -124,6 +125,7 @@ static const Keyword keywords[] = {
     { "INDEX",  TOKEN_INDEX },
     { "ON",     TOKEN_ON },
     { "EXPLAIN", TOKEN_EXPLAIN },
+    { "ANALYZE", TOKEN_ANALYZE },
 };
 
 // Ignoring case; keyword is upper-case.
