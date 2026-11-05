@@ -119,7 +119,7 @@ static void print_indexes(const Table *table) {
 // .schema [table], with each table's indexes.
 static void print_schema(const Database *db, const char *name) {
     if (name) {
-        const Table *table = database_find_table(db, name);
+        const Table *table = database_lookup_table(db, name);
 
         if (!table) {
             printf("Error: no such table '%s'\n", name);

@@ -6,9 +6,9 @@
 
 #include "error.h"
 
-Table *require_table(const Database *db, const char *name,
+Table *resolve_table(const Database *db, const char *name,
                      char *error, size_t error_size) {
-    Table *table = database_find_table(db, name);
+    Table *table = database_lookup_table(db, name);
 
     if (!table) {
         fail(error, error_size, "no such table '%s'", name);
@@ -35,9 +35,9 @@ int check_value(const Column *column, DataType given,
     return check_type(column, given, "value", error, error_size);
 }
 
-int require_column(const Table *table, const char *name, size_t *index,
+int resolve_column(const Table *table, const char *name, size_t *index,
                    char *error, size_t error_size) {
-    if (!table_find_column(table, name, index)) {
+    if (!table_lookup_column(table, name, index)) {
         return fail(error, error_size, "no such column '%s'", name);
     }
     return 1;

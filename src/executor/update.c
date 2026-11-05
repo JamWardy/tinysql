@@ -155,7 +155,7 @@ static int resolve_changes(ExprContext *ctx, const UpdateStatement *update,
         const Assignment *assign = &update->assignments[i];
         size_t index;
 
-        if (!require_column(table, assign->column, &index,
+        if (!resolve_column(table, assign->column, &index,
                             error, error_size) ||
             !expr_resolve(ctx, assign->value, EXPR_COLUMNS, "SET",
                           error, error_size) ||
@@ -240,7 +240,7 @@ int execute_update(Database *db, const Statement *stmt,
                    const ParamList *params, Result *result,
                    char *error, size_t error_size) {
     const UpdateStatement *update = &stmt->as.update;
-    Table *table = require_table(db, stmt->table_name, error, error_size);
+    Table *table = resolve_table(db, stmt->table_name, error, error_size);
 
     if (!table) {
         return 0;

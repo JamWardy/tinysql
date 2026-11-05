@@ -195,7 +195,7 @@ static int resolve_node(ExprContext *ctx, int node, int allowed,
                 return fail(error, error_size, "can't use column '%s' in %s",
                             n->as.column, place);
             }
-            if (!require_column(ctx->table, n->as.column,
+            if (!resolve_column(ctx->table, n->as.column,
                                 &ctx->columns[node], error, error_size)) {
                 return 0;
             }

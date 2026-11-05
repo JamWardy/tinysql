@@ -6,7 +6,7 @@ int execute_delete(Database *db, const Statement *stmt,
                    const ParamList *params, Result *result,
                    char *error, size_t error_size) {
     const DeleteStatement *delete = &stmt->as.delete;
-    Table *table = require_table(db, stmt->table_name, error, error_size);
+    Table *table = resolve_table(db, stmt->table_name, error, error_size);
 
     if (!table) {
         return 0;

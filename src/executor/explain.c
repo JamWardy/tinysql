@@ -99,7 +99,7 @@ static long long round_estimate(double estimate) {
 int execute_explain(Database *db, const Statement *stmt,
                     const ParamList *params, Result *result,
                     char *error, size_t error_size) {
-    Table *table = require_table(db, stmt->table_name, error, error_size);
+    Table *table = resolve_table(db, stmt->table_name, error, error_size);
     ExprContext ctx;
     Filter filter;
     const Filter *where;

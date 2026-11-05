@@ -20,7 +20,7 @@ functions we call, [GRAMMAR.md](GRAMMAR.md) for the SQL we accept, and
   as `select_rows` and `execute_update` do. A bad statement then fails
   with nothing half done.
 - **Extract a pattern the third time you write it.** That's how
-  `require_column`, `require_table`, `check_type`, `fail`
+  `resolve_column`, `resolve_table`, `check_type`, `fail`
   and `copy_text` came about. Name the helper after what it means, not how it works.
 - **`static` unless another file needs it.** A public function goes in
   the header.
@@ -32,7 +32,7 @@ A function that can fail does one of two things:
 | It produces | Returns | On failure |
 |---|---|---|
 | A yes or no, or results through out parameters | `int`: 1 for success | Returns 0 after writing a message to `char *error, size_t error_size` |
-| One pointer | The pointer | Returns `NULL`, after writing a message if it takes an `error` buffer (`require_table`) |
+| One pointer | The pointer | Returns `NULL`, after writing a message if it takes an `error` buffer (`resolve_table`) |
 
 - **Write errors with `fail`**, which is one line:
   `return fail(error, error_size, "no such table '%s'", name);`.
@@ -90,7 +90,7 @@ reasoning. In short:
 - **"There isn't one" is a flag**, `has_where`, `has_order`, alongside
   the value, not a special value such as `-1`. A lookup that may find
   nothing returns 1 or 0 and writes what it found through a pointer, as
-  `table_find_column` does. A `NULL` pointer is fine
+  `table_lookup_column` does. A `NULL` pointer is fine
   for an optional pointer, such as `where_resolve`'s filter.
 - **No `default:` in a switch over our own enums.** List every case, so
   the compiler warns about each switch that needs updating when a value
@@ -123,14 +123,17 @@ reasoning. In short:
   macros and enum values `UPPER_CASE`, with a prefix per enum (`TYPE_`,
   `TOKEN_`, `CMP_`).
 - Public functions start with what they act on, where there is one:
-  `database_find_table`, `table_append_row`.
+  `database_lookup_table`, `table_append_row`.
 - **Name a thing by its role, not its shape or mechanism.** Say what it's
   for: `find_indexable_conditions` collects the parts of a `WHERE` an
   index can use, where `find_bounds` only said they're `=`, `<` and `>`.
 - **Make it distinct from its nearest neighbour.** Where two things
   could be confused, the names should show the difference: the
   `Filter` is the whole `WHERE`; the indexable conditions are the part
-  an index can use.
+  an index can use. If two names clash, rename both until each says
+  what's particular about it, as a clash means neither does:
+  `table_lookup_column` finds a column or nothing, and `resolve_column`
+  turns a name from the SQL into one, or fails.
 - **Use the real-world term where there is one,** such as Postgres's
   "filter", "selectivity" or "seq scan", so what's learnt here carries
   over.

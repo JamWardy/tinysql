@@ -50,7 +50,7 @@ static int fill_values(ExprContext *ctx, const Statement *stmt,
         if (insert->column_count > 0) {
             const char *name = insert->columns[i];
 
-            if (!require_column(table, name, &index, error, error_size)) {
+            if (!resolve_column(table, name, &index, error, error_size)) {
                 return 0;
             }
             if (given[index]) {
@@ -89,7 +89,7 @@ static int check_values(const Table *table, const Value *values,
 int execute_insert(Database *db, const Statement *stmt,
                    const ParamList *params, Result *result,
                    char *error, size_t error_size) {
-    Table *table = require_table(db, stmt->table_name, error, error_size);
+    Table *table = resolve_table(db, stmt->table_name, error, error_size);
 
     if (!table) {
         return 0;

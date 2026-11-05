@@ -102,7 +102,7 @@ static int check_name_free(const Database *db, const char *name,
     size_t table;
     size_t index;
 
-    if (database_find_table(db, name)) {
+    if (database_lookup_table(db, name)) {
         return fail(error, error_size, "table '%s' already exists", name);
     }
     if (database_find_index(db, name, &table, &index)) {
@@ -170,7 +170,7 @@ int execute_create(Database *db, const Statement *stmt,
 int execute_create_index(Database *db, const Statement *stmt,
                          char *error, size_t error_size) {
     const CreateIndexStatement *create = &stmt->as.create_index;
-    Table *table = require_table(db, stmt->table_name, error, error_size);
+    Table *table = resolve_table(db, stmt->table_name, error, error_size);
     ColumnList columns;
 
     if (!table || !check_name_free(db, create->name, error, error_size)) {
@@ -185,7 +185,7 @@ int execute_create_index(Database *db, const Statement *stmt,
     for (size_t i = 0; i < columns.count; i++) {
         const char *name = create->columns[i];
 
-        if (!require_column(table, name, &columns.positions[i],
+        if (!resolve_column(table, name, &columns.positions[i],
                             error, error_size)) {
             return 0;
         }
@@ -219,7 +219,7 @@ int execute_drop_index(Database *db, const Statement *stmt,
 
 int execute_drop(Database *db, const Statement *stmt,
                  char *error, size_t error_size) {
-    Table *table = require_table(db, stmt->table_name, error, error_size);
+    Table *table = resolve_table(db, stmt->table_name, error, error_size);
 
     if (!table) {
         return 0;

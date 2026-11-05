@@ -663,7 +663,7 @@ static int check_index_names(Reader *r, const Database *db) {
             size_t other_index;
 
             database_find_index(db, name, &other_table, &other_index);
-            if (database_find_table(db, name) ||
+            if (database_lookup_table(db, name) ||
                 other_table != t || other_index != i) {
                 return read_fail(r, "the name '%s' is used twice", name);
             }
@@ -682,7 +682,7 @@ static int read_table(Reader *r, Database *db) {
         return 0;
     }
 
-    if (database_find_table(db, name)) {
+    if (database_lookup_table(db, name)) {
         return read_fail(r, "table '%s' appears twice", name);
     }
 

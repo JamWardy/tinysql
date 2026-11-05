@@ -99,7 +99,7 @@ int select_append_row(const ExprContext *ctx, const SelectList *list,
 
 // common.c: lookups and checks most statements need.
 
-Table *require_table(const Database *db, const char *name,
+Table *resolve_table(const Database *db, const char *name,
                      char *error, size_t error_size);
 
 // NULL can go in any column. what names the value in the message, e.g. "WHERE
@@ -112,7 +112,7 @@ int check_type(const Column *column, DataType given, const char *what,
 int check_value(const Column *column, DataType given,
                 char *error, size_t error_size);
 
-int require_column(const Table *table, const char *name, size_t *index,
+int resolve_column(const Table *table, const char *name, size_t *index,
                    char *error, size_t error_size);
 
 // Its own, or for a `?` its parameter's.

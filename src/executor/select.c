@@ -215,7 +215,7 @@ int execute_select(Database *db, const Statement *stmt,
                    const ParamList *params, Result *result,
                    char *error, size_t error_size) {
     const SelectStatement *select = &stmt->as.select;
-    const Table *table = require_table(db, stmt->table_name,
+    const Table *table = resolve_table(db, stmt->table_name,
                                        error, error_size);
 
     if (!table) {

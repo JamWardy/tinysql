@@ -90,7 +90,7 @@ void database_init(Database *db);
 
 void database_free(Database *db);
 
-Table *database_find_table(const Database *db, const char *name);
+Table *database_lookup_table(const Database *db, const char *name);
 
 // Doesn't check for duplicate table or column names; the executor does.
 Table *database_create_table(Database *db, const char *name,
@@ -103,7 +103,7 @@ void database_drop_table(Database *db, Table *table);
 int database_find_index(const Database *db, const char *name,
                         size_t *table, size_t *index);
 
-int table_find_column(const Table *table, const char *name, size_t *index);
+int table_lookup_column(const Table *table, const char *name, size_t *index);
 
 // columns must be valid, distinct positions. PRIMARY KEY also makes its columns
 // NOT NULL. The table must have no rows: nothing checks existing rows against

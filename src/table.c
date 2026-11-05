@@ -51,7 +51,7 @@ void database_free(Database *db) {
     database_init(db);
 }
 
-Table *database_find_table(const Database *db, const char *name) {
+Table *database_lookup_table(const Database *db, const char *name) {
     for (size_t i = 0; i < db->count; i++) {
         if (strcmp(db->tables[i].name, name) == 0) {
             return &db->tables[i];
@@ -188,7 +188,7 @@ void table_drop_index(Table *table, size_t index) {
     table->index_count--;
 }
 
-int table_find_column(const Table *table, const char *name, size_t *index) {
+int table_lookup_column(const Table *table, const char *name, size_t *index) {
     for (size_t i = 0; i < table->column_count; i++) {
         if (strcmp(table->columns[i].name, name) == 0) {
             *index = i;
