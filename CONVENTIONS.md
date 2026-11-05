@@ -8,7 +8,7 @@ Related notes: [FIXED_ARRAYS_VS_HEAP.md](FIXED_ARRAYS_VS_HEAP.md) for
 where memory comes from, [C_LIBRARY.md](C_LIBRARY.md) for the library
 functions we call, [GRAMMAR.md](GRAMMAR.md) for the SQL we accept,
 [DESIGN.md](DESIGN.md) for what it does, and [INDEXES.md](INDEXES.md)
-for why the index is a hash and not a B-tree.
+for the hash index and the B+ tree, and why each is used where it is.
 
 ## Functions
 

@@ -48,6 +48,13 @@ Done:
       expires_at)` serves `item_id = ? AND expires_at > ?`, as
       `DESIGN.md` describes under "Indexes" and `INDEXES.md` explains
       (file format version 7)
+- [x] A planner that picks the cheapest way to find a statement's rows
+      by estimated cost, and `EXPLAIN` to show it, as `DESIGN.md`
+      describes under "Plans" and "EXPLAIN"
+- [x] `ANALYZE`, with statistics the planner estimates from, as
+      `DESIGN.md` describes under "ANALYZE" (file format version 8)
+- [x] `ORDER BY ... LIMIT` through an index, walked in order and
+      stopping at the `LIMIT`, as `DESIGN.md` describes under "Indexes"
 - [x] `LIKE` and `ILIKE`, for searching item titles, with an index used
       for a pattern's fixed start, as `DESIGN.md` describes under
       "LIKE" and "Indexes"
@@ -105,8 +112,6 @@ Later, nice but not needed for the shop:
 
 Smaller tidy-ups:
 
-- [ ] GRAMMAR.md: split `primary = LPAREN condition RPAREN | comparison`
-      out of `not_condition`, whose name suggests it's always a NOT
 - [ ] `compile_commands.json` (git-ignored), so clangd jumps from a
       call to the function body
 - [x] Split `executor.c` (1,250 lines) into `src/executor/`, one file
