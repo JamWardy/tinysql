@@ -125,4 +125,4 @@ Reading along the leaves gives the rows in key order, which is what an
 `ORDER BY` on the next column wants: walked forwards for `ASC`, or
 backwards along the leaves' back links for `DESC`, with no sort, and
 stopping at a `LIMIT`. The leaves are linked both ways for this.
-`GRAMMAR.md` says which index a statement picks, and when.
+`DESIGN.md` says which index a statement picks, and when.

@@ -32,24 +32,24 @@ Done:
       values passed to `tinysql_run`
 - [x] `INSERT` with column names, `INSERT INTO users (email,
       password_hash) VALUES (?, ?)`, leaving the others `NULL`, as
-      `GRAMMAR.md` describes under "Inserting"
-- [x] Expressions, as `GRAMMAR.md` describes under "Expressions",
+      `DESIGN.md` describes under "Inserting"
+- [x] Expressions, as `DESIGN.md` describes under "Expressions",
       such as `SET stock = stock - ?`: one tree per statement for
       `SET`, `VALUES`, `WHERE`, the `SELECT` list (with `AS`) and
       `ORDER BY`, with `BOOL`, `TRUE` and `FALSE`
-- [x] Transactions: `BEGIN`, `COMMIT` and `ROLLBACK`, as `GRAMMAR.md`
+- [x] Transactions: `BEGIN`, `COMMIT` and `ROLLBACK`, as `DESIGN.md`
       describes under "Transactions"
-- [x] `SELECT ... FOR UPDATE`, accepted as `GRAMMAR.md` describes under
+- [x] `SELECT ... FOR UPDATE`, accepted as `DESIGN.md` describes under
       "FOR UPDATE"
 - [x] IDs: `AUTOINCREMENT`, and `INSERT ... RETURNING` to get the new
-      ID back, as `GRAMMAR.md` describes under "IDs" and "RETURNING"
+      ID back, as `DESIGN.md` describes under "IDs" and "RETURNING"
       (file format version 6)
 - [x] `CREATE INDEX` and `DROP INDEX`, B+ trees, so `orders (item_id,
       expires_at)` serves `item_id = ? AND expires_at > ?`, as
-      `GRAMMAR.md` describes under "Indexes" and `INDEXES.md` explains
+      `DESIGN.md` describes under "Indexes" and `INDEXES.md` explains
       (file format version 7)
 - [x] `LIKE` and `ILIKE`, for searching item titles, with an index used
-      for a pattern's fixed start, as `GRAMMAR.md` describes under
+      for a pattern's fixed start, as `DESIGN.md` describes under
       "LIKE" and "Indexes"
 
 Next, roughly in order, towards a toy online shop (see "Goal" below):
@@ -214,7 +214,7 @@ Built the same way, as a second kind (`CONSTRAINT_UNIQUE`, kind 2 in
 the file from version 5). A table keeps up to `MAX_KEYS` (8) keys, and
 rejects two with the same columns. A key with a `NULL` stays out of its
 index (`key_has_null`), so `table_find_key` never finds it and it can't
-clash. `GRAMMAR.md` describes how it behaves.
+clash. `DESIGN.md` describes how it behaves, under "Keys".
 
 ### Later: REFERENCES
 

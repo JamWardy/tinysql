@@ -6,8 +6,9 @@ inconvenient. When code breaks a rule on purpose, a comment says why.
 
 Related notes: [FIXED_ARRAYS_VS_HEAP.md](FIXED_ARRAYS_VS_HEAP.md) for
 where memory comes from, [C_LIBRARY.md](C_LIBRARY.md) for the library
-functions we call, [GRAMMAR.md](GRAMMAR.md) for the SQL we accept, and
-[INDEXES.md](INDEXES.md) for why the index is a hash and not a B-tree.
+functions we call, [GRAMMAR.md](GRAMMAR.md) for the SQL we accept,
+[DESIGN.md](DESIGN.md) for what it does, and [INDEXES.md](INDEXES.md)
+for why the index is a hash and not a B-tree.
 
 ## Functions
 
@@ -195,8 +196,9 @@ reasoning. In short:
 - **For memory changes**, also run with `-fsanitize=address,undefined`,
   or where AddressSanitizer doesn't run, UBSan plus
   `MallocScribble=1 MallocErrorAbort=1` on macOS.
-- **Keep the docs in step:** `GRAMMAR.md` for any SQL change, `TODO.md`
-  when something is done, `C_LIBRARY.md` for new library functions.
+- **Keep the docs in step:** `GRAMMAR.md` for a change to the SQL
+  accepted, `DESIGN.md` for a change to what it does, `TODO.md` when
+  something is done, `C_LIBRARY.md` for new library functions.
 - **Changing the file format?** Update the layout comment in
   `persist.c`, bump `FORMAT_VERSION`, and keep loading every older
   version.
