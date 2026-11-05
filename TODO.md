@@ -78,6 +78,13 @@ Later, nice but not needed for the shop:
 - [ ] Threads in the server, so statements from several connections
       run at once. TinySQL isn't thread-safe yet: statements are parsed
       into one shared buffer
+- [ ] Authentication and roles in the server, needed before it listens
+      beyond 127.0.0.1: a password checked when a connection opens, as
+      Postgres's startup message is, and roles that limit what each
+      client may do, read-only for search, read-write for orders, and
+      replication for the replica, as Postgres's `REPLICATION` role
+      attribute does. Until then, any local process can read, change
+      or copy everything
 - [ ] `SELECT ... FOR UPDATE` with real row locks, as Postgres has, so
       orders for different items don't wait for each other. Needs an
       undo log per transaction, as `ROLLBACK` can't reload the file
