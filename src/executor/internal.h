@@ -7,6 +7,7 @@
 #include <stddef.h>
 
 #include "executor.h"  // For ParamList.
+#include "like.h"
 #include "parser.h"
 #include "result.h"
 #include "table.h"
@@ -175,6 +176,12 @@ int expr_resolve(ExprContext *ctx, int node, int allowed, const char *place,
 int expr_evaluate(const ExprContext *ctx, int node, const Row *row,
                   Value *out, char *error, size_t error_size);
 
+// The pattern of the EXPR_LIKE at node, with its escape, for row. Sets *none
+// if either is NULL, so nothing matches. Fails on a bad escape or pattern.
+int expr_like_pattern(const ExprContext *ctx, int node, const Row *row,
+                      LikePattern *out, int *none,
+                      char *error, size_t error_size);
+
 // For expr_evaluate to read afterwards.
 int expr_compute_aggregates(ExprContext *ctx, int node, const RowList *rows,
                             char *error, size_t error_size);
@@ -193,6 +200,7 @@ typedef struct {
     int lower_inclusive;  // 1 for >=.
     int upper;            // e's node in `c < e` or `c <= e`, or -1.
     int upper_inclusive;  // 1 for <=.
+    int like;             // `c LIKE e`'s node, whose prefix bounds c, or -1.
 } IndexableConditions;
 
 typedef enum {
@@ -216,6 +224,8 @@ typedef struct {
     const TreeIndex *index;        // PLAN_INDEX's index, how many of its
     size_t equal_count;            // leading columns are pinned, and its
     const IndexableConditions *range;  // next column's conditions, or NULL.
+    int like;                      // With range, the LIKE whose prefix gives
+                                   // its bounds instead, or -1.
     PlanOrdering ordering;
     double reads;                  // Estimated rows read, LIMIT included.
     double cost;                   // A sort included, if it needs one.

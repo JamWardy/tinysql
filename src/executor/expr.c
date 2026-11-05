@@ -4,6 +4,7 @@
 #include <stdio.h>
 
 #include "error.h"
+#include "like.h"
 
 // Most messages name an expression, rebuilt as SQL and cut short to fit.
 #define MAX_EXPR_TEXT 64
@@ -174,6 +175,26 @@ static int resolve_binary(ExprContext *ctx, int node, int allowed,
     return 1;
 }
 
+// The operand, pattern and escape are all TEXT.
+static int resolve_like(ExprContext *ctx, int node, int allowed,
+                        const char *place, char *error, size_t error_size) {
+    const ExprNode *n = &ctx->nodes[node];
+    int parts[3] = { n->as.like.operand, n->as.like.pattern,
+                     n->as.like.escape };
+    const char *what = n->as.like.ignore_case ? "ILIKE" : "LIKE";
+
+    for (size_t i = 0; i < 3; i++) {
+        if (parts[i] >= 0 &&
+            (!resolve_node(ctx, parts[i], allowed, place, error, error_size) ||
+             !check_operand(ctx, parts[i], TYPE_TEXT, i == 2 ? "ESCAPE" : what,
+                            error, error_size))) {
+            return 0;
+        }
+    }
+    ctx->types[node] = TYPE_BOOL;
+    return 1;
+}
+
 // place names where the expression is, such as "WHERE", for messages.
 static int resolve_node(ExprContext *ctx, int node, int allowed,
                         const char *place, char *error, size_t error_size) {
@@ -227,6 +248,9 @@ static int resolve_node(ExprContext *ctx, int node, int allowed,
             return resolve_node(ctx, n->as.is_null.operand, allowed, place,
                                 error, error_size);
 
+        case EXPR_LIKE:
+            return resolve_like(ctx, node, allowed, place, error, error_size);
+
         case EXPR_AGGREGATE:
             return resolve_aggregate(ctx, node, allowed, place,
                                      error, error_size);
@@ -253,6 +277,11 @@ int expr_has_aggregate(const ExprNode *nodes, int node) {
                    expr_has_aggregate(nodes, n->as.op.right);
         case EXPR_IS_NULL:
             return expr_has_aggregate(nodes, n->as.is_null.operand);
+        case EXPR_LIKE:
+            return expr_has_aggregate(nodes, n->as.like.operand) ||
+                   expr_has_aggregate(nodes, n->as.like.pattern) ||
+                   (n->as.like.escape >= 0 &&
+                    expr_has_aggregate(nodes, n->as.like.escape));
         case EXPR_AGGREGATE:
             return 1;
     }
@@ -275,6 +304,11 @@ int expr_uses_columns(const ExprNode *nodes, int node) {
                    expr_uses_columns(nodes, n->as.op.right);
         case EXPR_IS_NULL:
             return expr_uses_columns(nodes, n->as.is_null.operand);
+        case EXPR_LIKE:
+            return expr_uses_columns(nodes, n->as.like.operand) ||
+                   expr_uses_columns(nodes, n->as.like.pattern) ||
+                   (n->as.like.escape >= 0 &&
+                    expr_uses_columns(nodes, n->as.like.escape));
     }
     return 0;
 }
@@ -438,6 +472,54 @@ static int evaluate_binary(const ExprContext *ctx, const ExprNode *n,
     return 1;
 }
 
+int expr_like_pattern(const ExprContext *ctx, int node, const Row *row,
+                      LikePattern *out, int *none,
+                      char *error, size_t error_size) {
+    const ExprNode *n = &ctx->nodes[node];
+    Value pattern;
+    Value escape;
+
+    escape.type = TYPE_TEXT;
+    escape.as.text = NULL;
+    *none = 0;
+    if (!expr_evaluate(ctx, n->as.like.pattern, row, &pattern,
+                       error, error_size) ||
+        (n->as.like.escape >= 0 &&
+         !expr_evaluate(ctx, n->as.like.escape, row, &escape,
+                        error, error_size))) {
+        return 0;
+    }
+    if (pattern.type == TYPE_NULL || escape.type == TYPE_NULL) {
+        *none = 1;
+        return 1;
+    }
+    return like_init(out, pattern.as.text, escape.as.text,
+                     n->as.like.ignore_case, error, error_size);
+}
+
+static int evaluate_like(const ExprContext *ctx, const ExprNode *n,
+                         const Row *row, Value *out,
+                         char *error, size_t error_size) {
+    int node = (int)(n - ctx->nodes);
+    LikePattern pattern;
+    Value operand;
+    int none;
+
+    if (!expr_evaluate(ctx, n->as.like.operand, row, &operand,
+                       error, error_size) ||
+        !expr_like_pattern(ctx, node, row, &pattern, &none,
+                           error, error_size)) {
+        return 0;
+    }
+    if (none || operand.type == TYPE_NULL) {
+        *out = null_value();
+        return 1;
+    }
+    *out = bool_value(like_matches(&pattern, operand.as.text) !=
+                      n->as.like.negated);
+    return 1;
+}
+
 int expr_evaluate(const ExprContext *ctx, int node, const Row *row,
                   Value *out, char *error, size_t error_size) {
     const ExprNode *n = &ctx->nodes[node];
@@ -488,6 +570,9 @@ int expr_evaluate(const ExprContext *ctx, int node, const Row *row,
 
         case EXPR_BINARY:
             return evaluate_binary(ctx, n, row, out, error, error_size);
+
+        case EXPR_LIKE:
+            return evaluate_like(ctx, n, row, out, error, error_size);
     }
     return 1;
 }
@@ -577,6 +662,14 @@ int expr_compute_aggregates(ExprContext *ctx, int node, const RowList *rows,
         case EXPR_IS_NULL:
             return expr_compute_aggregates(ctx, n->as.is_null.operand, rows,
                                            error, error_size);
+        case EXPR_LIKE:
+            return expr_compute_aggregates(ctx, n->as.like.operand, rows,
+                                           error, error_size) &&
+                   expr_compute_aggregates(ctx, n->as.like.pattern, rows,
+                                           error, error_size) &&
+                   (n->as.like.escape < 0 ||
+                    expr_compute_aggregates(ctx, n->as.like.escape, rows,
+                                            error, error_size));
         case EXPR_AGGREGATE:
             return compute_aggregate(ctx, node, rows, &ctx->aggregates[node],
                                      error, error_size);

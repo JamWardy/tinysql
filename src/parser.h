@@ -74,6 +74,7 @@ typedef enum {
     EXPR_UNARY,      // OP_NEGATE or OP_NOT, on left.
     EXPR_BINARY,     // Any other operator, on left and right.
     EXPR_IS_NULL,    // `a IS NULL` or `a IS NOT NULL`, on left.
+    EXPR_LIKE,       // `a [NOT] LIKE p [ESCAPE e]`, or ILIKE.
     EXPR_AGGREGATE   // `COUNT(*)`, or a function of left.
 } ExprKind;
 
@@ -94,6 +95,13 @@ typedef struct {
             int operand;
             int negated;                // 1 for IS NOT NULL.
         } is_null;                      // EXPR_IS_NULL
+        struct {
+            int operand;
+            int pattern;
+            int escape;                 // -1 for the default, `\`.
+            int negated;                // 1 for NOT LIKE.
+            int ignore_case;            // 1 for ILIKE.
+        } like;                         // EXPR_LIKE
         struct {
             AggregateFunc func;
             int operand;                // -1 for COUNT(*).

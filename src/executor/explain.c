@@ -81,7 +81,11 @@ static void describe(const Table *table, const Plan *plan, int sorted,
         char ops[16] = "=";
 
         if (plan->kind == PLAN_INDEX && i == plan->equal_count) {
-            write_range(ops, sizeof(ops), plan->range);
+            if (plan->like >= 0) {
+                snprintf(ops, sizeof(ops), "LIKE prefix");
+            } else {
+                write_range(ops, sizeof(ops), plan->range);
+            }
         }
         if (plan->kind == PLAN_KEY) {
             ops[0] = '\0';  // A key is pinned whole, by =.

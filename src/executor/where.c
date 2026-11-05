@@ -69,10 +69,23 @@ static int outside_equal_values(const Plan *plan, const Value *key,
     return 0;
 }
 
+// The ends of a plan's range on its next column, worked out as the walk
+// starts: from the WHERE's comparisons, or from a LIKE's prefix.
+typedef struct {
+    int has_lower;
+    int lower_inclusive;
+    Value lower;
+    int has_upper;
+    int upper_inclusive;
+    Value upper;
+    LikeRange like;  // A LIKE's, whose text lower and upper point into; its
+                     // lower is NULL otherwise.
+} Bounds;
+
 // Walking forwards: whether key is past plan's range, its range column NULL
-// (which sorts last) or beyond upper.
+// (which sorts last) or beyond the upper bound.
 static int after_range(const Plan *plan, const Value *key, const Value *probe,
-                      const Value *upper) {
+                       const Bounds *bounds) {
     size_t k = plan->equal_count;
 
     if (outside_equal_values(plan, key, probe)) {
@@ -84,28 +97,29 @@ static int after_range(const Plan *plan, const Value *key, const Value *probe,
     if (key[k].type == TYPE_NULL) {
         return 1;
     }
-    if (plan->range->upper >= 0) {
-        int c = value_compare(&key[k], upper);
-        return c > 0 || (c == 0 && !plan->range->upper_inclusive);
+    if (bounds->has_upper) {
+        int c = value_compare(&key[k], &bounds->upper);
+        return c > 0 || (c == 0 && !bounds->upper_inclusive);
     }
     return 0;
 }
 
-// Walking backwards: whether key is before plan's range, below lower. NULLs,
-// which come first this way, are left for the WHERE to turn away.
+// Walking backwards: whether key is before plan's range, below the lower
+// bound. NULLs, which come first this way, are left for the WHERE to turn
+// away.
 static int before_range(const Plan *plan, const Value *key, const Value *probe,
-                        const Value *lower) {
+                        const Bounds *bounds) {
     size_t k = plan->equal_count;
 
     if (outside_equal_values(plan, key, probe)) {
         return 1;
     }
-    if (!plan->range || plan->range->lower < 0 || key[k].type == TYPE_NULL) {
+    if (!plan->range || !bounds->has_lower || key[k].type == TYPE_NULL) {
         return 0;
     }
 
-    int c = value_compare(&key[k], lower);
-    return c < 0 || (c == 0 && !plan->range->lower_inclusive);
+    int c = value_compare(&key[k], &bounds->lower);
+    return c < 0 || (c == 0 && !bounds->lower_inclusive);
 }
 
 // e reads no columns, so there's no row to give it. Sets *none if it's NULL, as
@@ -121,60 +135,107 @@ static int evaluate_bound(const Filter *filter, int node, Value *out,
     return 1;
 }
 
-// Walks plan's range of its index, keeping the rows the whole WHERE matches,
-// in index order if in_order and stopping once there are stop_after, or else
-// in table order. out->positions has room for every row.
-static int collect_from_index(const Table *table, const Filter *filter,
-                              const CandidatePlans *candidates,
-                              const Plan *plan, int in_order,
-                              size_t stop_after, PositionList *out,
-                              char *error, size_t error_size) {
-    const TreeIndex *index = plan->index;
+static Value text_value(char *text) {
+    Value value;
+    value.type = TYPE_TEXT;
+    value.as.text = text;
+    return value;
+}
+
+// The bounds from the prefix of the LIKE at node. Sets *none if its pattern
+// is NULL.
+static int find_like_bounds(const Filter *filter, int node, Bounds *out,
+                            int *none, char *error, size_t error_size) {
+    LikePattern pattern;
+
+    if (!expr_like_pattern(filter->ctx, node, NULL, &pattern, none,
+                           error, error_size)) {
+        return 0;
+    }
+    if (*none) {
+        return 1;
+    }
+    if (!like_range(&pattern, &out->like)) {
+        return fail(error, error_size, "out of memory");
+    }
+    out->has_lower = 1;
+    out->lower_inclusive = 1;
+    out->lower = text_value(out->like.lower);
+    if (out->like.upper) {
+        out->has_upper = 1;
+        out->upper_inclusive = out->like.upper_inclusive;
+        out->upper = text_value(out->like.upper);
+    }
+    return 1;
+}
+
+// Sets *none if a bound is NULL. Free out with free_bounds, even on failure.
+static int find_bounds(const Filter *filter, const Plan *plan, Bounds *out,
+                       int *none, char *error, size_t error_size) {
     const IndexableConditions *range = plan->range;
-    size_t k = plan->equal_count;
-    Value probe[MAX_COLUMNS];
-    Value lower;
-    Value upper;
-    int none = 0;
-    BTreeCursor cursor;
 
-    for (size_t i = 0; i < k; i++) {
-        int node = candidates->indexable[index->columns.positions[i]].equal;
+    out->has_lower = 0;
+    out->has_upper = 0;
+    out->like.lower = NULL;
 
-        if (!evaluate_bound(filter, node, &probe[i], &none,
+    if (!range) {
+        return 1;
+    }
+    if (plan->like >= 0) {
+        return find_like_bounds(filter, plan->like, out, none,
+                                error, error_size);
+    }
+    if (range->lower >= 0) {
+        out->has_lower = 1;
+        out->lower_inclusive = range->lower_inclusive;
+        if (!evaluate_bound(filter, range->lower, &out->lower, none,
                             error, error_size)) {
             return 0;
         }
     }
-    if (range && range->lower >= 0 &&
-        !evaluate_bound(filter, range->lower, &lower, &none,
-                        error, error_size)) {
-        return 0;
+    if (range->upper >= 0) {
+        out->has_upper = 1;
+        out->upper_inclusive = range->upper_inclusive;
+        if (!evaluate_bound(filter, range->upper, &out->upper, none,
+                            error, error_size)) {
+            return 0;
+        }
     }
-    if (range && range->upper >= 0 &&
-        !evaluate_bound(filter, range->upper, &upper, &none,
-                        error, error_size)) {
-        return 0;
+    return 1;
+}
+
+static void free_bounds(Bounds *bounds) {
+    if (bounds->like.lower) {
+        like_range_free(&bounds->like);
     }
-    if (none) {
-        return 1;
-    }
+}
+
+// Walks the range of plan's index from probe's pinned values and bounds,
+// keeping the rows the whole WHERE matches, in index order if in_order and
+// stopping once there are stop_after, or else in table order.
+static int walk_index(const Table *table, const Filter *filter,
+                      const Plan *plan, Value *probe, const Bounds *bounds,
+                      int in_order, size_t stop_after, PositionList *out,
+                      char *error, size_t error_size) {
+    const TreeIndex *index = plan->index;
+    size_t k = plan->equal_count;
+    BTreeCursor cursor;
 
     // Start at the end of the range the walk begins from: the first entry
     // with the pinned columns, past the bound there if there is one.
     int backwards = plan->ordering == ORDERING_BACKWARDS;
 
     if (backwards) {
-        if (range && range->upper >= 0) {
-            probe[k] = upper;
+        if (bounds->has_upper) {
+            probe[k] = bounds->upper;
             btree_seek_last(&index->tree, probe, k + 1,
-                            range->upper_inclusive, &cursor);
+                            bounds->upper_inclusive, &cursor);
         } else {
             btree_seek_last(&index->tree, probe, k, 1, &cursor);
         }
-    } else if (range && range->lower >= 0) {
-        probe[k] = lower;
-        btree_seek_first(&index->tree, probe, k + 1, range->lower_inclusive,
+    } else if (bounds->has_lower) {
+        probe[k] = bounds->lower;
+        btree_seek_first(&index->tree, probe, k + 1, bounds->lower_inclusive,
                          &cursor);
     } else {
         btree_seek_first(&index->tree, probe, k, 1, &cursor);
@@ -185,8 +246,8 @@ static int collect_from_index(const Table *table, const Filter *filter,
         size_t row = btree_cursor_row(&cursor);
         int matches;
 
-        if (backwards ? before_range(plan, key, probe, &lower)
-                            : after_range(plan, key, probe, &upper)) {
+        if (backwards ? before_range(plan, key, probe, bounds)
+                      : after_range(plan, key, probe, bounds)) {
             break;
         }
         if (!row_matches(&table->rows[row], filter, &matches,
@@ -210,6 +271,36 @@ static int collect_from_index(const Table *table, const Filter *filter,
               compare_positions);
     }
     return 1;
+}
+
+// Walks plan's range of its index, as walk_index does. out->positions has
+// room for every row.
+static int collect_from_index(const Table *table, const Filter *filter,
+                              const CandidatePlans *candidates,
+                              const Plan *plan, int in_order,
+                              size_t stop_after, PositionList *out,
+                              char *error, size_t error_size) {
+    const TreeIndex *index = plan->index;
+    Value probe[MAX_COLUMNS];
+    Bounds bounds;
+    int none = 0;
+
+    for (size_t i = 0; i < plan->equal_count; i++) {
+        int node = candidates->indexable[index->columns.positions[i]].equal;
+
+        if (!evaluate_bound(filter, node, &probe[i], &none,
+                            error, error_size)) {
+            return 0;
+        }
+    }
+
+    int ok = find_bounds(filter, plan, &bounds, &none, error, error_size) &&
+             (none || walk_index(table, filter, plan, probe, &bounds,
+                                 in_order, stop_after, out,
+                                 error, error_size));
+
+    free_bounds(&bounds);
+    return ok;
 }
 
 // A NULL finds nothing.

@@ -46,6 +46,7 @@ static int precedence(const ExprNode *node) {
         case EXPR_AGGREGATE:
             return PREC_PRIMARY;
         case EXPR_IS_NULL:
+        case EXPR_LIKE:
             return PREC_COMPARE;
         case EXPR_UNARY:
             return node->as.op.op == OP_NOT ? PREC_NOT : PREC_NEGATE;
@@ -143,6 +144,16 @@ static void write_node(Writer *w, const ExprNode *nodes, int index,
             write_node(w, nodes, node->as.is_null.operand, PREC_COMPARE + 1);
             write_text(w, node->as.is_null.negated ? " IS NOT NULL"
                                                    : " IS NULL");
+            break;
+        case EXPR_LIKE:
+            write_node(w, nodes, node->as.like.operand, PREC_COMPARE + 1);
+            write_text(w, "%s%s ", node->as.like.negated ? " NOT" : "",
+                       node->as.like.ignore_case ? " ILIKE" : " LIKE");
+            write_node(w, nodes, node->as.like.pattern, PREC_COMPARE + 1);
+            if (node->as.like.escape >= 0) {
+                write_text(w, " ESCAPE ");
+                write_node(w, nodes, node->as.like.escape, PREC_COMPARE + 1);
+            }
             break;
         case EXPR_AGGREGATE:
             write_text(w, "%s(", aggregate_name(node->as.aggregate.func));

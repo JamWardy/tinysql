@@ -62,6 +62,22 @@ static int column_comparison(const ExprContext *ctx, int node, size_t *column,
     return 0;
 }
 
+// Whether node is `c [NOT] LIKE e`, or ILIKE, with a pattern and escape that
+// read no columns.
+static int column_like(const ExprContext *ctx, int node, size_t *column) {
+    const ExprNode *n = &ctx->nodes[node];
+
+    if (n->kind != EXPR_LIKE ||
+        ctx->nodes[n->as.like.operand].kind != EXPR_COLUMN ||
+        expr_uses_columns(ctx->nodes, n->as.like.pattern) ||
+        (n->as.like.escape >= 0 &&
+         expr_uses_columns(ctx->nodes, n->as.like.escape))) {
+        return 0;
+    }
+    *column = ctx->columns[n->as.like.operand];
+    return 1;
+}
+
 static void find_indexable_conditions(const Filter *filter, int node,
                                       IndexableConditions *indexable) {
     const ExprContext *ctx = filter->ctx;
@@ -73,6 +89,13 @@ static void find_indexable_conditions(const Filter *filter, int node,
     if (n->kind == EXPR_BINARY && n->as.op.op == OP_AND) {
         find_indexable_conditions(filter, n->as.op.left, indexable);
         find_indexable_conditions(filter, n->as.op.right, indexable);
+        return;
+    }
+    if (column_like(ctx, node, &column)) {
+        // NOT LIKE matches either side of the prefix, and ILIKE either case.
+        if (!n->as.like.negated && !n->as.like.ignore_case) {
+            indexable[column].like = node;
+        }
         return;
     }
     if (!column_comparison(ctx, node, &column, &op, &value)) {
@@ -206,13 +229,43 @@ static double range_selectivity(const ColumnStats *stats, const Value *value,
     return result;
 }
 
+static double at_least_zero(double x) {
+    return x > 0.0 ? x : 0.0;
+}
+
+// `column op value`, from the column's statistics.
+static double value_selectivity(const ColumnStats *stats, Operator op,
+                                const Value *value) {
+    if (value->type == TYPE_NULL) {
+        return 0.0;  // Comparing with NULL is never true.
+    }
+
+    switch (op) {
+        case OP_EQUAL:
+            return equal_selectivity(stats, value);
+        case OP_NOT_EQUAL:
+            return at_least_zero(1.0 - stats->null_fraction -
+                                 equal_selectivity(stats, value));
+        case OP_LESS:
+        case OP_LESS_EQUAL:
+        case OP_GREATER:
+        case OP_GREATER_EQUAL:
+            return range_selectivity(stats, value, op);
+        default:
+            return default_selectivity(op);
+    }
+}
+
+static const ColumnStats *column_stats(const ExprContext *ctx, size_t column) {
+    return ctx->table->stats ? &ctx->table->stats[column] : NULL;
+}
+
 // `column op value`, from the column's statistics. Without them, or when the
 // value can't be worked out (the statement will report why when it runs), the
 // default guess.
 static double comparison_selectivity(const ExprContext *ctx, size_t column,
                                      Operator op, int value_node) {
-    const ColumnStats *stats =
-        ctx->table->stats ? &ctx->table->stats[column] : NULL;
+    const ColumnStats *stats = column_stats(ctx, column);
     char error[TINYSQL_MAX_ERROR];
     Value value;
 
@@ -220,27 +273,119 @@ static double comparison_selectivity(const ExprContext *ctx, size_t column,
                                  error, sizeof(error))) {
         return default_selectivity(op);
     }
-    if (value.type == TYPE_NULL) {
-        return 0.0;  // Comparing with NULL is never true.
+    return value_selectivity(stats, op, &value);
+}
+
+static Value text_value(char *text) {
+    Value value;
+    value.type = TYPE_TEXT;
+    value.as.text = text;
+    return value;
+}
+
+// The LIKE at node's pattern, with no row, as its pattern reads no columns.
+// Sets *none if the pattern is NULL. Fails if it can't be worked out.
+static int plan_like_pattern(const ExprContext *ctx, int node,
+                             LikePattern *pattern, int *none) {
+    char error[TINYSQL_MAX_ERROR];
+
+    return expr_like_pattern(ctx, node, NULL, pattern, none,
+                             error, sizeof(error));
+}
+
+// Fraction of rows `column LIKE pattern` matches: the common values it
+// matches, plus the rest's share as the histogram's values sample it. A
+// histogram that has none shows only that matches are rarer than it can
+// tell, so then the rest gets the default guess.
+static double like_selectivity(const ColumnStats *stats,
+                               const LikePattern *pattern) {
+    double result = 0.0;
+    double rest = 1.0 - stats->null_fraction;
+    size_t sampled = 0;
+
+    for (size_t i = 0; i < stats->common_count; i++) {
+        if (like_matches(pattern, stats->common[i].as.text)) {
+            result += stats->common_fraction[i];
+        }
+        rest -= stats->common_fraction[i];
+    }
+    for (size_t i = 0; i < stats->histogram_count; i++) {
+        sampled += like_matches(pattern, stats->histogram[i].as.text);
     }
 
-    double equal;
+    double share = sampled > 0
+                       ? (double)sampled / (double)stats->histogram_count
+                       : DEFAULT_EQUAL;
 
-    switch (op) {
-        case OP_EQUAL:
-            return equal_selectivity(stats, &value);
-        case OP_NOT_EQUAL:
-            equal = equal_selectivity(stats, &value);
-            return 1.0 - stats->null_fraction - equal > 0.0
-                       ? 1.0 - stats->null_fraction - equal : 0.0;
-        case OP_LESS:
-        case OP_LESS_EQUAL:
-        case OP_GREATER:
-        case OP_GREATER_EQUAL:
-            return range_selectivity(stats, &value, op);
-        default:
-            return default_selectivity(op);
+    return result + at_least_zero(rest) * share;
+}
+
+// Fraction of rows the LIKE at node matches: from the column's statistics when
+// it's `column LIKE pattern`, else the default guess.
+static double estimate_like(const ExprContext *ctx, int node) {
+    const ExprNode *n = &ctx->nodes[node];
+    const ColumnStats *stats = NULL;
+    LikePattern pattern;
+    size_t column;
+    int none;
+    double fraction = DEFAULT_EQUAL;
+    double nulls = DEFAULT_NULL;
+
+    if (column_like(ctx, node, &column)) {
+        stats = column_stats(ctx, column);
     }
+    if (stats && plan_like_pattern(ctx, node, &pattern, &none)) {
+        if (none) {
+            return 0.0;
+        }
+        fraction = like_selectivity(stats, &pattern);
+        nulls = stats->null_fraction;
+    }
+    return n->as.like.negated ? at_least_zero(1.0 - nulls - fraction)
+                              : fraction;
+}
+
+// Fraction of rows in range, from the column's statistics, or the default
+// guess without them.
+static double like_range_selectivity(const ColumnStats *stats,
+                                     const LikeRange *range) {
+    Value lower = text_value(range->lower);
+    Value upper;
+
+    if (!stats) {
+        return DEFAULT_EQUAL;
+    }
+    if (range->upper_inclusive) {
+        return equal_selectivity(stats, &lower);
+    }
+
+    double result = range_selectivity(stats, &lower, OP_GREATER_EQUAL);
+
+    if (range->upper) {
+        upper = text_value(range->upper);
+        result -= range_selectivity(stats, &upper, OP_GREATER_EQUAL);
+    }
+    return at_least_zero(result);
+}
+
+// When the LIKE at node has a prefix to bound an index's range, sets *fraction
+// to the share of rows in the range.
+static int like_bounds_range(const ExprContext *ctx, size_t column, int node,
+                             double *fraction) {
+    LikePattern pattern;
+    LikeRange range;
+    int none;
+
+    if (!plan_like_pattern(ctx, node, &pattern, &none) || none ||
+        !like_range(&pattern, &range)) {
+        return 0;
+    }
+
+    int bounds = range.lower[0] != '\0';
+
+    *fraction = like_range_selectivity(column_stats(ctx, column), &range);
+    like_range_free(&range);
+    return bounds;
 }
 
 // From the statistics where a condition compares a column with a value or
@@ -270,6 +415,8 @@ static double estimate_selectivity(const ExprContext *ctx, int node) {
             }
             return n->as.is_null.negated ? 1.0 - nulls : nulls;
         }
+        case EXPR_LIKE:
+            return estimate_like(ctx, node);
         case EXPR_BINARY:
             break;
         case EXPR_COLUMN:
@@ -319,6 +466,7 @@ static void add_plan(CandidatePlans *candidates, PlanKind kind, double reads,
     plan->index = NULL;
     plan->equal_count = 0;
     plan->range = NULL;
+    plan->like = -1;
     plan->ordering = ORDERING_NONE;
     plan->reads = reads;
     plan->cost = reads * cost_per_row;
@@ -370,6 +518,7 @@ static void add_index_plans(const Table *table, const ExprContext *ctx,
     for (size_t i = 0; i < table->index_count; i++) {
         const TreeIndex *index = &table->indexes[i];
         const IndexableConditions *range = NULL;
+        int like = -1;
         double fraction = 1.0;
         size_t k = 0;
 
@@ -398,6 +547,14 @@ static void add_index_plans(const Table *table, const ExprContext *ctx,
             }
             if (b->lower >= 0 || b->upper >= 0) {
                 range = b;
+            } else if (b->like >= 0) {
+                double share;
+
+                if (like_bounds_range(ctx, column, b->like, &share)) {
+                    fraction *= share;
+                    range = b;
+                    like = b->like;
+                }
             }
         }
         int gives_order = index_gives_order(index, k, order);
@@ -413,6 +570,7 @@ static void add_index_plans(const Table *table, const ExprContext *ctx,
         plan->index = index;
         plan->equal_count = k;
         plan->range = range;
+        plan->like = like;
 
         // A pinned ORDER BY column has one value, so any direction will do.
         if (gives_order) {
@@ -462,6 +620,7 @@ void choose_plan(const Table *table, const Filter *filter,
         candidates->indexable[c].equal = -1;
         candidates->indexable[c].lower = -1;
         candidates->indexable[c].upper = -1;
+        candidates->indexable[c].like = -1;
     }
     candidates->count = 0;
     candidates->sorted = order && order->by != ORDER_BY_NOTHING;

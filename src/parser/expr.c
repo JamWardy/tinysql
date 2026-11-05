@@ -202,7 +202,37 @@ static int parse_additive(Parser *p, int *out) {
     }
 }
 
-// comparison = additive [ compare_op additive | IS [ NOT ] NULL ]
+// The rest of `a [NOT] LIKE p [ESCAPE e]`, a being operand, from the NOT,
+// LIKE or ILIKE.
+static int parse_like(Parser *p, int operand, int *out) {
+    int negated = match(p, TOKEN_NOT);
+    int ignore_case = peek(p)->type == TOKEN_ILIKE;
+    int pattern;
+    int escape = -1;
+
+    p->pos++;  // LIKE or ILIKE, which parse_comparison checked.
+    if (!parse_additive(p, &pattern) ||
+        (match(p, TOKEN_ESCAPE) && !parse_additive(p, &escape)) ||
+        !new_node(p, EXPR_LIKE, out)) {
+        return 0;
+    }
+
+    ExprNode *node = node_at(p, *out);
+    node->as.like.operand = operand;
+    node->as.like.pattern = pattern;
+    node->as.like.escape = escape;
+    node->as.like.negated = negated;
+    node->as.like.ignore_case = ignore_case;
+    return 1;
+}
+
+static int is_like(TokenType type) {
+    return type == TOKEN_LIKE || type == TOKEN_ILIKE;
+}
+
+// comparison = additive [ compare_op additive | IS [ NOT ] NULL
+//                       | [ NOT ] ( LIKE | ILIKE ) additive
+//                         [ ESCAPE additive ] ]
 // compare_op = EQUAL | NOT_EQUAL | LESS | LESS_EQUAL
 //            | GREATER | GREATER_EQUAL
 //
@@ -210,6 +240,13 @@ static int parse_additive(Parser *p, int *out) {
 static int parse_comparison(Parser *p, int *out) {
     if (!parse_additive(p, out)) {
         return 0;
+    }
+
+    // The list ends in EOF, which isn't a NOT, so pos + 1 exists.
+    if (is_like(peek(p)->type) ||
+        (peek(p)->type == TOKEN_NOT &&
+         is_like(p->tokens->tokens[p->pos + 1].type))) {
+        return parse_like(p, *out, out);
     }
 
     if (match(p, TOKEN_IS)) {

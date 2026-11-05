@@ -70,6 +70,9 @@ typedef enum {
     TOKEN_ON,
     TOKEN_EXPLAIN,
     TOKEN_ANALYZE,
+    TOKEN_LIKE,
+    TOKEN_ILIKE,
+    TOKEN_ESCAPE,
     TOKEN_EOF
 } TokenType;
 
